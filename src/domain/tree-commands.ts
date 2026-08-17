@@ -17,6 +17,8 @@ export interface ContinueNodeInput {
   text: string;
   messageId: string;
   now: string;
+  /** 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (可选, 旧调用方不传) */
+  anchorFilePath?: string;
   selectionContexts?: SelectionContext[];
 }
 
@@ -30,6 +32,8 @@ export interface SubmitChildDraftInput {
   childId: string;
   messageId: string;
   now: string;
+  /** 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (可选, 旧调用方不传) */
+  anchorFilePath?: string;
 }
 
 export type TreeOperation =
@@ -138,6 +142,10 @@ export function continueNode(
   const previousCurrentNodeId = state.currentNodeId;
   const selectionContexts =
     input.selectionContexts ?? node.draft.selectionContexts;
+  // 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (空路径不覆盖已有锚点)
+  if ((state.anchorFilePath === undefined || state.anchorFilePath === null || state.anchorFilePath === "") && input.anchorFilePath) {
+    state.anchorFilePath = input.anchorFilePath;
+  }
   node.messages.push(
     userMessage(input.messageId, text, input.now, selectionContexts)
   );
@@ -283,6 +291,10 @@ export function submitChildDraft(
   const previousChildIds = [...parent.childIds];
   const previousCurrentNodeId = state.currentNodeId;
   const previousTitles = applyFirstQuestionTitle(state, text);
+  // 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (空路径不覆盖已有锚点)
+  if ((state.anchorFilePath === undefined || state.anchorFilePath === null || state.anchorFilePath === "") && input.anchorFilePath) {
+    state.anchorFilePath = input.anchorFilePath;
+  }
   const firstMessage = userMessage(
     input.messageId,
     text,

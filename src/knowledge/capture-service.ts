@@ -170,9 +170,24 @@ async function buildTreeExportPlan(
   includedNodeIds: Set<string>
 ): Promise<TreeExportPlan> {
   const conversationStem = safeFileStem(conversation.title);
+  // 诉求1: 如果对话有锚点(发送首条消息时打开的 md 笔记),
+  // 在该笔记同级目录建 `<笔记名>-tree/`, 避免污染 TreeTalk 设置目录;
+  // 旧对话无锚点时回退到 treeFolder (与上游默认行为一致).
+  let parentFolder = treeFolder;
+  if (conversation.anchorFilePath) {
+    // patch 7: 用纯字符串规范化, 避免跨平台 path 拼接差异
+    const normalized = conversation.anchorFilePath.replace(/\\/g, "/");
+    const lastSlash = normalized.lastIndexOf("/");
+    const anchorDir = lastSlash > 0 ? normalized.substring(0, lastSlash) : "";
+    const anchorName = lastSlash > 0 ? normalized.substring(lastSlash + 1) : normalized;
+    const anchorStem = anchorName.replace(/\.md$/i, "");
+    parentFolder = anchorDir
+      ? `${anchorDir}/${anchorStem}-tree`
+      : `${anchorStem}-tree`;
+  }
   const folder = await uniqueFolder(
     vault,
-    treeFolder,
+    parentFolder,
     `${timestampForFile(capturedAt)}-${conversationStem}`
   );
   const reserved = new Set<string>();

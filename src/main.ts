@@ -852,21 +852,33 @@ export default class TreeTalkPlugin extends Plugin {
     const relatedNoteDepth = this.pluginSettings.relatedNoteDepth;
     const contextDivergenceEnabled =
       this.pluginSettings.contextDivergenceEnabled;
+    // 诉求1: 获取当前打开的 md 笔记路径, 传给 submitChildDraft/continueNode 用于锚定沉淀目录
+    // 修复: 用 getActiveFile() 而非 activeMarkdownSelectionSource(),
+    // 因为发消息时焦点在 TreeTalk 输入框, getActiveViewOfType(MarkdownView) 返回 null
+    const anchorFilePath = this.app.workspace.getActiveFile()?.path;
     const userMessageId = crypto.randomUUID();
+    const childInput = {
+      text,
+      childId: crypto.randomUUID(),
+      messageId: userMessageId,
+      now
+    } as Parameters<typeof submitChildDraft>[1];
+    if (anchorFilePath !== undefined) {
+      childInput.anchorFilePath = anchorFilePath;
+    }
+    const continueInput = {
+      nodeId: before.currentNodeId,
+      text,
+      messageId: userMessageId,
+      now
+    } as Parameters<typeof continueNode>[1];
+    if (anchorFilePath !== undefined) {
+      continueInput.anchorFilePath = anchorFilePath;
+    }
     const command =
       current.draft.mode === "child"
-        ? submitChildDraft(before, {
-            text,
-            childId: crypto.randomUUID(),
-            messageId: userMessageId,
-            now
-          })
-        : continueNode(before, {
-            nodeId: before.currentNodeId,
-            text,
-            messageId: userMessageId,
-            now
-          });
+        ? submitChildDraft(before, childInput)
+        : continueNode(before, continueInput);
     this.tabsStore.updateConversation(tab.id, () => command.state);
     let requestState = command.state;
     try {
@@ -1594,6 +1606,15 @@ export default class TreeTalkPlugin extends Plugin {
       );
       if (path !== undefined) new Notice(`已沉淀到 ${path}`);
     } catch (error) {
+      // 诉求1 debug: 沉淀失败时把真实错误打印到控制台 + 写入日志文件, 便于排查
+      console.error("[TreeTalk] 沉淀失败，真实错误:", error);
+      try {
+        const detail = error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error);
+        await this.app.vault.adapter.write(
+          ".obsidian/plugins/TreeTalk-Obsidian/hermes-debug-error.log",
+          `[${new Date().toISOString()}] captureKnowledge 失败\nscope=${request?.scope}\nanchor=${request?.conversation?.anchorFilePath}\n${detail}\n`
+        );
+      } catch { /* 写日志失败也不影响主流程 */ }
       logWarning("知识沉淀失败", error);
       new Notice("知识沉淀失败，对话内容未受影响");
     }

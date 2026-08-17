@@ -234,6 +234,12 @@ export interface ConversationFile {
   rootNodeId: string;
   currentNodeId: string;
   nodes: Record<string, ConversationNode>;
+  /**
+   * 诉求1: 对话锁定时打开的 md 笔记路径 (发送首条消息时记录).
+   * 沉淀目录会基于此路径创建 `<笔记名>-tree/` 同级目录.
+   * 旧对话无此字段, 沉淀时回退到 TreeTalk 设置.
+   */
+  anchorFilePath?: string;
   contextArtifacts?: ConversationContextArtifacts;
   depositGraphState?: DepositGraphState;
   ui: ConversationUiState;

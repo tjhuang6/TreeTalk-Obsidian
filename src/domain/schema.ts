@@ -1239,6 +1239,10 @@ export function parseConversation(value: unknown): ConversationFile {
     nodes,
     ui: parseUi(source.ui)
   };
+  // 诉求1: 解析锚点路径 (旧对话无此字段时跳过, 向后兼容)
+  if (source.anchorFilePath !== undefined) {
+    conversation.anchorFilePath = string(source.anchorFilePath, "anchorFilePath");
+  }
   if (source.depositGraphState !== undefined) {
     conversation.depositGraphState = parseDepositGraphState(source.depositGraphState);
   }
