@@ -223,7 +223,7 @@ describe("TreeTalk settings tab - profile integration", () => {
     ];
     await tab.setControlValue("provider", "minimax");
     expect(tab.getControlValue("provider")).toBe("minimax");
-    expect(tab.getControlValue("model")).toBe("MiniMax-M2");
+    expect(tab.getControlValue("model")).toBe("MiniMax-M3");
     expect(tab.getControlValue("baseUrl")).toBe("");
   });
 
