@@ -44,7 +44,11 @@ import {
   confirmHistoryDeletion,
   HistoryManagerModal
 } from "./history/history-manager-modal";
-import { KnowledgeCaptureService } from "./knowledge/capture-service";
+import {
+  AnchorCaptureError,
+  KnowledgeCaptureService,
+  mapAnchorCaptureErrorToNotice
+} from "./knowledge/capture-service";
 import { SourceHighlightStore } from "./navigation/source-highlight-store";
 import {
   conversationContainsSource,
@@ -77,6 +81,8 @@ import { ConversationRepository } from "./storage/conversation-repository";
 import type { ObsidianPrivateStoragePort } from "./storage/obsidian-private-storage-port";
 import { ObsidianNoteLinkResolver } from "./storage/obsidian-note-link-resolver";
 import { ObsidianVaultPort } from "./storage/obsidian-vault-port";
+import { ObsidianAnchorFileIndex } from "./storage/obsidian-anchor-file-index";
+import { VaultIdentityStore } from "./storage/vault-identity-store";
 import {
   conversationFolder,
   type ConversationRoots
@@ -85,6 +91,13 @@ import { BatchedPersistenceScheduler } from "./storage/persistence-scheduler";
 import { observeActiveTabLeaves } from "./storage/tabs-persistence-observer";
 import { createPrivateStorageRuntime } from "./storage/runtime-private-storage";
 import { SessionPersistence } from "./storage/session-persistence";
+import {
+  AnchorRenamer,
+  type AnchorRenamerStore,
+  type StoredAnchorRecord
+} from "./domain/anchor-renamer";
+import { relocateVerifiedAnchor } from "./domain/anchor-relocator";
+import { classifyAnchor, type AnchorStatus } from "./domain/anchor-status";
 import { ProgressiveRunCheckpointStore } from "./state/progressive-run-checkpoint-store";
 import { ActiveConversationStore } from "./tabs/active-conversation-store";
 import { ConversationTabsStore } from "./tabs/conversation-tabs-store";
@@ -320,6 +333,11 @@ export default class TreeTalkPlugin extends Plugin {
   /** 显式锚定：tabId -> 待落库的笔记路径（仅首条消息时进入 canonical 数据）。 */
   private readonly pendingAnchors = new Map<string, string>();
   private readonly anchorChipListeners = new Set<() => void>();
+  /** Vault 身份与文件锚点重定位 / 串行 rename 处理。 */
+  private vaultIdentityStore: VaultIdentityStore | undefined;
+  private anchorFileIndex: ObsidianAnchorFileIndex | undefined;
+  private anchorRenamer: AnchorRenamer | undefined;
+  private currentVaultId: string | undefined;
 
   async onload(): Promise<void> {
     this.registerEditorExtension(createExcerptDropExtension());
@@ -343,7 +361,8 @@ export default class TreeTalkPlugin extends Plugin {
     this.captureService = new KnowledgeCaptureService(
       this.knowledgeVault,
       this.pluginSettings.knowledgeFolder,
-      this.pluginSettings.treeCaptureFolder
+      this.pluginSettings.treeCaptureFolder,
+      { anchorStatusResolver: (conversation) => this.classifyAnchor(conversation) }
     );
     this.repository = new ConversationRepository(vaultPort);
     this.persistence = new SessionPersistence(this.repository, () => {
@@ -365,6 +384,20 @@ export default class TreeTalkPlugin extends Plugin {
       this.historyIndex,
       (conversationId) => this.closeOpenHistory(conversationId)
     );
+    // Vault 身份与文件锚点重定位：在插件目录之外持久化每 Vault 的 UUID。
+    this.vaultIdentityStore = new VaultIdentityStore(
+      vaultPort,
+      this.app.vault.configDir
+    );
+    this.anchorFileIndex = new ObsidianAnchorFileIndex(this.app.vault);
+    try {
+      this.currentVaultId = await this.vaultIdentityStore.getVaultId();
+    } catch (error) {
+      logWarning("读取 Vault 身份失败", error);
+      new Notice("TreeTalk Vault 身份文件损坏，锚点校验已停用");
+      this.currentVaultId = undefined;
+    }
+    this.anchorRenamer = new AnchorRenamer(this.buildAnchorRenamerStore());
     const reconciliation = await this.lifecycleQueue.run(() =>
       this.lifecycleReconciler?.reconcile() ??
       Promise.resolve({ repaired: 0, failed: 0 })
@@ -379,6 +412,7 @@ export default class TreeTalkPlugin extends Plugin {
     }
 
     await this.restoreOpenTabs(vaultPort, runtime.roots);
+    await this.relocateOpenTabsOnStartup();
     this.tabLifecycle = new TabLifecycleController(
       this.tabsStore,
       this.persistence,
@@ -487,6 +521,30 @@ export default class TreeTalkPlugin extends Plugin {
         }
       })
     );
+    // Vault rename 事件：串行更新 pending 锚点、已打开会话和未打开会话。
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (!(file instanceof TFile) || !isMarkdownPath(file.path)) return;
+        const oldNormalized = oldPath.replace(/\\/gu, "/");
+        const newNormalized = file.path.replace(/\\/gu, "/");
+        if (oldNormalized === newNormalized) return;
+        const renamer = this.anchorRenamer;
+        if (renamer === undefined) return;
+        const oldFolder = oldNormalized.includes("/")
+          ? oldNormalized.slice(0, oldNormalized.lastIndexOf("/"))
+          : "";
+        const newFolder = newNormalized.includes("/")
+          ? newNormalized.slice(0, newNormalized.lastIndexOf("/"))
+          : "";
+        void this.handleVaultRename(
+          renamer,
+          oldNormalized,
+          newNormalized,
+          oldFolder,
+          newFolder
+        );
+      })
+    );
     await this.saveTabsWorkspace();
     void this.nodeSummaries.repairOpenTabs();
   }
@@ -530,7 +588,8 @@ export default class TreeTalkPlugin extends Plugin {
     this.captureService = new KnowledgeCaptureService(
       this.knowledgeVault,
       normalized.knowledgeFolder,
-      normalized.treeCaptureFolder
+      normalized.treeCaptureFolder,
+      { anchorStatusResolver: (conversation) => this.classifyAnchor(conversation) }
     );
     this.pluginData = { ...this.pluginData, settings: normalized };
     await this.persistPluginData();
@@ -585,6 +644,251 @@ export default class TreeTalkPlugin extends Plugin {
     this.pendingAnchors.set(tab.id, filePath);
     this.notifyAnchorChipListeners();
     new Notice(`已锚定到 ${filePath}，发送首条消息后生效`);
+  }
+
+  /**
+   * 显式重新绑定入口（右键菜单调用）：将当前 active 会话或目标 Markdown
+   * 写入完整 anchorVaultId + anchorFilePath + anchorFileCtime 三元组。
+   *
+   * 只对 legacy/foreign/missing/ambiguous 锚点开放；verified 锚点保持冻结。
+   * 无用户消息的新会话则直接走普通锚定流程。
+   */
+  async rebindConversationToFile(filePath: string): Promise<void> {
+    if (!isMarkdownPath(filePath)) return;
+    const tab = this.tabsStore.getActiveTab();
+    if (tab === undefined || tab.mode !== "active") {
+      new Notice("请先打开要重新绑定的 TreeTalk 对话");
+      return;
+    }
+    const status = this.classifyAnchor(tab.conversation);
+    if (status.kind === "verified") {
+      new Notice("当前锚点仍有效，无需重新绑定");
+      return;
+    }
+    if (status.kind === "none") {
+      // 未锚定的对话：回退为首次锚定。
+      this.pendingAnchors.set(tab.id, filePath);
+      this.notifyAnchorChipListeners();
+      new Notice(`已锚定到 ${filePath}，发送首条消息后生效`);
+      return;
+    }
+    // legacy / foreign / missing / ambiguous：写入 verified 三元组（只增加一次 revision）。
+    if (this.currentVaultId === undefined) {
+      new Notice("Vault 身份不可用，无法重新绑定");
+      return;
+    }
+    const ctime = await this.readCtimeForAnchor(filePath);
+    if (ctime === undefined) {
+      new Notice("目标笔记无法读取 ctime，请确认文件存在");
+      return;
+    }
+    const updated = structuredClone(tab.conversation) as ConversationFile;
+    updated.anchorVaultId = this.currentVaultId;
+    updated.anchorFilePath = filePath;
+    updated.anchorFileCtime = ctime;
+    updated.revision += 1;
+    updated.updatedAt = new Date().toISOString();
+    this.tabsStore.updateConversation(tab.id, () => updated);
+    this.pendingAnchors.delete(tab.id);
+    this.notifyAnchorChipListeners();
+    try {
+      this.persistenceScheduler.flush();
+      await this.persistence?.flush(tab.folder);
+    } catch (error) {
+      logWarning("重新绑定锚点保存失败", error);
+      new Notice("重新绑定保存失败，请重试");
+      return;
+    }
+    new Notice(`已重新绑定到 ${filePath}`);
+  }
+
+  private async readCtimeForAnchor(filePath: string): Promise<number | undefined> {
+    if (this.anchorFileIndex === undefined) return undefined;
+    const ctime = this.anchorFileIndex.getCtime(filePath);
+    if (typeof ctime === "number" && Number.isFinite(ctime)) return ctime;
+    return undefined;
+  }
+
+  /** 当前会话锚点状态判定：注入 Vault 身份与文件解析器。 */
+  private classifyAnchor(conversation: ConversationFile): AnchorStatus {
+    if (this.currentVaultId === undefined || this.anchorFileIndex === undefined) {
+      // Vault 身份不可用时降级为旧 path-only 行为：未配置 → none。
+      if (conversation.anchorFilePath === undefined) {
+        return { kind: "none" };
+      }
+      return { kind: "legacy-unverified" };
+    }
+    return classifyAnchor({
+      conversation,
+      currentVaultId: this.currentVaultId,
+      resolveCurrentPath: (path) =>
+        this.anchorFileIndex?.resolveCurrentPath(path),
+      resolveCtime: (path) =>
+        this.anchorFileIndex?.getCtime(path),
+      findCandidatesByCtime: (ctime) =>
+        this.anchorFileIndex?.findCandidatesByCtime(ctime) ?? []
+    });
+  }
+
+  /** 构建 AnchorRenamer 的存储后端：枚举所有未打开会话并用 repository revision 保存。 */
+  private buildAnchorRenamerStore(): AnchorRenamerStore {
+    return {
+      loadStored: () => this.loadAllStoredAnchors(),
+      saveStored: (record) => this.saveStoredAnchorRecord(record),
+      skipOpenConversationIds: new Set(),
+      onError: (error, record) => {
+        logWarning(`rename 串行更新失败: ${record.conversationId}`, error);
+      }
+    };
+  }
+
+  private async loadAllStoredAnchors(): Promise<StoredAnchorRecord[]> {
+    const roots = this.roots;
+    if (roots === undefined) return [];
+    const openIds = new Set(
+      Object.values(this.tabsStore.getSnapshot().tabs).map(
+        (tab) => tab.conversationId
+      )
+    );
+    const out: StoredAnchorRecord[] = [];
+    for (const area of [roots.active, roots.history]) {
+      let folders: string[];
+      try {
+        folders = await this.loadConversationFolders(area);
+      } catch (error) {
+        logWarning(`读取 ${area} 失败`, error);
+        continue;
+      }
+      for (const folder of folders) {
+        const conversationId = folder.slice(folder.lastIndexOf("/") + 1);
+        if (openIds.has(conversationId)) continue;
+        const repository = this.repository;
+        if (repository === undefined) continue;
+        try {
+          const loaded = await this.lifecycleQueue.run(() => repository.load(folder));
+          const conversation = loaded.conversation;
+          if (
+            conversation.anchorFilePath === undefined ||
+            conversation.anchorVaultId === undefined ||
+            conversation.anchorFileCtime === undefined
+          ) {
+            continue;
+          }
+          out.push({
+            conversationId: conversation.id,
+            folder,
+            anchorFilePath: conversation.anchorFilePath,
+            anchorVaultId: conversation.anchorVaultId,
+            anchorFileCtime: conversation.anchorFileCtime,
+            revision: conversation.revision
+          });
+        } catch (error) {
+          logWarning(`读取会话失败: ${folder}`, error);
+        }
+      }
+    }
+    return out;
+  }
+
+  private async loadConversationFolders(area: string): Promise<string[]> {
+    if (this.persistence === undefined) return [];
+    const runtime = createPrivateStorageRuntime(this.app.vault);
+    const folders = await runtime.port.list(`${area}/`);
+    return folders
+      .filter((path) => path.endsWith("/tree.json"))
+      .map((path) => path.slice(0, -"/tree.json".length));
+  }
+
+  private async saveStoredAnchorRecord(record: StoredAnchorRecord): Promise<void> {
+    const repository = this.repository;
+    if (repository === undefined) return;
+    const loaded = await this.lifecycleQueue.run(() => repository.load(record.folder));
+    const conversation = loaded.conversation;
+    conversation.anchorFilePath = record.anchorFilePath;
+    conversation.anchorVaultId = record.anchorVaultId;
+    conversation.anchorFileCtime = record.anchorFileCtime;
+    conversation.revision = record.revision;
+    await this.lifecycleQueue.run(() =>
+      repository.save(record.folder, conversation, record.revision - 1)
+    );
+  }
+
+  /** 启动时对已打开会话执行 verified 锚点 ctime 唯一候选重定位。 */
+  private async relocateOpenTabsOnStartup(): Promise<void> {
+    if (
+      this.currentVaultId === undefined ||
+      this.anchorFileIndex === undefined ||
+      this.persistence === undefined
+    ) {
+      return;
+    }
+    const port = {
+      resolveCurrentPath: (path: string) =>
+        this.anchorFileIndex!.resolveCurrentPath(path),
+      getCtime: (path: string) => this.anchorFileIndex!.getCtime(path),
+      findCandidatesByCtime: (ctime: number) =>
+        this.anchorFileIndex!.findCandidatesByCtime(ctime)
+    };
+    for (const tab of Object.values(this.tabsStore.getSnapshot().tabs)) {
+      const conversation = tab.conversation;
+      const verified =
+        conversation.anchorVaultId === this.currentVaultId &&
+        typeof conversation.anchorFilePath === "string" &&
+        typeof conversation.anchorFileCtime === "number";
+      if (!verified) continue;
+      try {
+        const result = await relocateVerifiedAnchor(conversation, port);
+        if (result.kind === "relocated" || result.kind === "unchanged") {
+          if (result.conversation !== conversation) {
+            this.tabsStore.updateConversation(tab.id, () => result.conversation);
+          }
+        }
+      } catch (error) {
+        logWarning(`启动锚点重定位失败: ${tab.conversationId}`, error);
+      }
+    }
+  }
+
+  /** 处理 Vault rename 事件：精确改名 + 父文件夹移动 + pending 锚点同步。 */
+  private async handleVaultRename(
+    renamer: AnchorRenamer,
+    oldPath: string,
+    newPath: string,
+    oldFolder: string,
+    newFolder: string
+  ): Promise<void> {
+    // 1. 精确文件重命名：更新未打开会话 + 打开会话 + pending 锚点。
+    const exactResult = await renamer.applyExactRename(
+      oldPath,
+      newPath,
+      new Date().toISOString()
+    );
+    if (exactResult !== null && exactResult.updates.length > 0) {
+      for (const update of exactResult.updates) {
+        logWarning(
+          `rename 已更新: ${update.previousPath} → ${update.nextPath} (${update.conversationId})`
+        );
+      }
+    }
+    // 2. 父文件夹移动：当 oldPath 是文件且其父目录也发生改名时（即 `a/x.md` → `b/x.md`），
+    //    applyFolderMove 会处理前缀重映射；这里只在 oldFolder 存在且与 newFolder 不同时调用。
+    if (oldFolder !== "" && oldFolder !== newFolder) {
+      await renamer.applyFolderMove(
+        oldFolder,
+        newFolder,
+        new Date().toISOString()
+      );
+    }
+    // 3. 已打开会话：精确改名同步。
+    const openConversations = Object.values(
+      this.tabsStore.getSnapshot().tabs
+    ).map((tab) => tab.conversation);
+    await renamer.applyExactRenameToOpen(openConversations, oldPath, newPath);
+    if (oldFolder !== "" && oldFolder !== newFolder) {
+      await renamer.applyFolderMoveToOpen(openConversations, oldFolder, newFolder);
+    }
+    // 4. 通知 chip 订阅者（pending 锚点路径可能已变）。
+    this.notifyAnchorChipListeners();
   }
 
   private setWebSearchEnabled(enabled: boolean): Promise<void> {
@@ -817,12 +1121,35 @@ export default class TreeTalkPlugin extends Plugin {
 
   private registerAnchorMenus(): void {
     const anchorItem = (menu: Menu, filePath: string): void => {
+      const tab = this.tabsStore.getActiveTab();
+      const status =
+        tab !== undefined && tab.mode === "active"
+          ? this.classifyAnchor(tab.conversation)
+          : ({ kind: "none" } as AnchorStatus);
+      // 有效 verified 锚点保持冻结：仅显示普通「锚定」入口（仍由对话自身首条消息路径决定）。
+      if (status.kind === "verified") {
+        menu.addItem((item) =>
+          item
+            .setTitle("TreeTalk 对话已锚定此笔记")
+            .setIcon("anchor")
+            .setDisabled(true)
+        );
+        return;
+      }
       menu.addItem((item) =>
         item
-          .setTitle("锚定 TreeTalk 对话到此笔记")
+          .setTitle(
+            status.kind === "none"
+              ? "锚定 TreeTalk 对话到此笔记"
+              : "重新绑定当前 TreeTalk 对话到此笔记"
+          )
           .setIcon("anchor")
           .onClick(() => {
-            void this.anchorConversationToFile(filePath);
+            if (status.kind === "none") {
+              void this.anchorConversationToFile(filePath);
+            } else {
+              void this.rebindConversationToFile(filePath);
+            }
           })
       );
     };
@@ -1699,17 +2026,24 @@ export default class TreeTalkPlugin extends Plugin {
       );
       if (path !== undefined) new Notice(`已沉淀到 ${path}`);
     } catch (error) {
-      // 诉求1 debug: 沉淀失败时把真实错误打印到控制台 + 写入日志文件, 便于排查
-      console.error("[TreeTalk] 沉淀失败，真实错误:", error);
-      try {
-        const detail = error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error);
-        await this.app.vault.adapter.write(
-          ".obsidian/plugins/TreeTalk-Obsidian/hermes-debug-error.log",
-          `[${new Date().toISOString()}] captureKnowledge 失败\nscope=${request?.scope}\nanchor=${request?.conversation?.anchorFilePath}\n${detail}\n`
-        );
-      } catch { /* 写日志失败也不影响主流程 */ }
-      logWarning("知识沉淀失败", error);
-      new Notice("知识沉淀失败，对话内容未受影响");
+      // Vault-aware: 锚点状态错误（foreign/legacy/missing/ambiguous）映射为明确中文提示，
+      // 不再显示笼统的「沉淀失败」信息；其他错误也走统一的 Notice 文案。
+      const message = mapAnchorCaptureErrorToNotice(error);
+      if (error instanceof AnchorCaptureError) {
+        logWarning("沉淀被锚点状态阻止", error);
+      } else {
+        // 诉求1 debug: 沉淀失败时把真实错误打印到控制台 + 写入日志文件, 便于排查
+        console.error("[TreeTalk] 沉淀失败，真实错误:", error);
+        try {
+          const detail = error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error);
+          await this.app.vault.adapter.write(
+            ".obsidian/plugins/TreeTalk-Obsidian/hermes-debug-error.log",
+            `[${new Date().toISOString()}] captureKnowledge 失败\nscope=${request?.scope}\nanchor=${request?.conversation?.anchorFilePath}\n${detail}\n`
+          );
+        } catch { /* 写日志失败也不影响主流程 */ }
+        logWarning("知识沉淀失败", error);
+      }
+      new Notice(message);
     }
   }
 

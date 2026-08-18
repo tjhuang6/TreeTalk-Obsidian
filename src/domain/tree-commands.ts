@@ -19,6 +19,10 @@ export interface ContinueNodeInput {
   now: string;
   /** 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (可选, 旧调用方不传) */
   anchorFilePath?: string;
+  /** Vault-aware 锚点来源 UUID。三个字段全部齐全才会写入 verified 三元组。 */
+  anchorVaultId?: string;
+  /** Vault-aware 锚点文件的 ctime（毫秒，Unix epoch）。 */
+  anchorFileCtime?: number;
   selectionContexts?: SelectionContext[];
 }
 
@@ -34,6 +38,10 @@ export interface SubmitChildDraftInput {
   now: string;
   /** 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (可选, 旧调用方不传) */
   anchorFilePath?: string;
+  /** Vault-aware 锚点来源 UUID。三个字段全部齐全才会写入 verified 三元组。 */
+  anchorVaultId?: string;
+  /** Vault-aware 锚点文件的 ctime（毫秒，Unix epoch）。 */
+  anchorFileCtime?: number;
 }
 
 export type TreeOperation =
@@ -137,15 +145,57 @@ export function hasUserMessage(conversation: ConversationFile): boolean {
   );
 }
 
+interface AnchorTripleInput {
+  anchorFilePath?: string | undefined;
+  anchorVaultId?: string | undefined;
+  anchorFileCtime?: number | undefined;
+}
+
+function isUuidLike(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(
+      value
+    )
+  );
+}
+
 function applyAnchor(
   state: ConversationFile,
-  anchorFilePath: string | undefined
+  input: AnchorTripleInput | string | undefined
 ): void {
   // 锚点只在对话尚无任何用户消息时写入一次；之后任何消息不得修改。
-  if (anchorFilePath === undefined) return;
   if (hasUserMessage(state)) return;
+  // 兼容旧调用方：纯字符串仍按 path-only legacy 写入。
+  if (typeof input === "string" || input === undefined) {
+    if (input === undefined) return;
+    if (!isMarkdownPath(input)) return;
+    state.anchorFilePath = input;
+    return;
+  }
+  const { anchorFilePath, anchorVaultId, anchorFileCtime } = input;
+  if (anchorFilePath === undefined) return;
   if (!isMarkdownPath(anchorFilePath)) return;
+  const hasVaultId = anchorVaultId !== undefined;
+  const hasCtime = anchorFileCtime !== undefined;
+  // 三个字段都缺失 → 旧 path-only legacy 锚点。
+  if (!hasVaultId && !hasCtime) {
+    state.anchorFilePath = anchorFilePath;
+    return;
+  }
+  // 必须三个字段同时存在且合法才进入 verified 三元组；否则一律不写入（避免半截状态）。
+  if (!isUuidLike(anchorVaultId)) return;
+  if (
+    typeof anchorFileCtime !== "number" ||
+    !Number.isFinite(anchorFileCtime) ||
+    !Number.isInteger(anchorFileCtime) ||
+    anchorFileCtime < 0
+  ) {
+    return;
+  }
   state.anchorFilePath = anchorFilePath;
+  state.anchorVaultId = anchorVaultId;
+  state.anchorFileCtime = anchorFileCtime;
 }
 
 export function continueNode(
@@ -164,7 +214,11 @@ export function continueNode(
   const selectionContexts =
     input.selectionContexts ?? node.draft.selectionContexts;
   // 锚点：仅对话尚无用户消息时写入（见 applyAnchor），一次决定后冻结。
-  applyAnchor(state, input.anchorFilePath);
+  applyAnchor(state, {
+    anchorFilePath: input.anchorFilePath,
+    anchorVaultId: input.anchorVaultId,
+    anchorFileCtime: input.anchorFileCtime
+  });
   node.messages.push(
     userMessage(input.messageId, text, input.now, selectionContexts)
   );
@@ -311,7 +365,11 @@ export function submitChildDraft(
   const previousCurrentNodeId = state.currentNodeId;
   const previousTitles = applyFirstQuestionTitle(state, text);
   // 锚点：仅对话尚无用户消息时写入（见 applyAnchor），一次决定后冻结。
-  applyAnchor(state, input.anchorFilePath);
+  applyAnchor(state, {
+    anchorFilePath: input.anchorFilePath,
+    anchorVaultId: input.anchorVaultId,
+    anchorFileCtime: input.anchorFileCtime
+  });
   const firstMessage = userMessage(
     input.messageId,
     text,
