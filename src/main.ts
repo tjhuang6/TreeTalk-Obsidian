@@ -102,6 +102,11 @@ import {
   type VaultRename
 } from "./domain/anchor-rename-workflow";
 import { relocateVerifiedAnchor } from "./domain/anchor-relocator";
+import {
+  relocateStoredAnchorRecord,
+  relocateTreeCaptureAnchor,
+  saveStoredAnchorRecord
+} from "./domain/stored-anchor-workflow";
 import { classifyAnchor, type AnchorStatus } from "./domain/anchor-status";
 import { verifiedFirstMessageAnchor } from "./domain/verified-first-message-anchor";
 import { ProgressiveRunCheckpointStore } from "./state/progressive-run-checkpoint-store";
@@ -343,6 +348,7 @@ export default class TreeTalkPlugin extends Plugin {
   private vaultIdentityStore: VaultIdentityStore | undefined;
   private anchorFileIndex: ObsidianAnchorFileIndex | undefined;
   private anchorRenamer: AnchorRenamer | undefined;
+  private anchorRenameWorkflow: AnchorRenameWorkflow | undefined;
   private currentVaultId: string | undefined;
 
   async onload(): Promise<void> {
@@ -404,6 +410,7 @@ export default class TreeTalkPlugin extends Plugin {
       this.currentVaultId = undefined;
     }
     this.anchorRenamer = new AnchorRenamer(this.buildAnchorRenamerStore());
+    this.anchorRenameWorkflow = new AnchorRenameWorkflow(this.anchorRenamer);
     const reconciliation = await this.lifecycleQueue.run(() =>
       this.lifecycleReconciler?.reconcile() ??
       Promise.resolve({ repaired: 0, failed: 0 })
@@ -419,6 +426,7 @@ export default class TreeTalkPlugin extends Plugin {
 
     await this.restoreOpenTabs(vaultPort, runtime.roots);
     await this.relocateOpenTabsOnStartup();
+    await this.relocateStoredAnchorsOnStartup();
     this.tabLifecycle = new TabLifecycleController(
       this.tabsStore,
       this.persistence,
@@ -536,9 +544,8 @@ export default class TreeTalkPlugin extends Plugin {
         const oldNormalized = oldPath.replace(/\\/gu, "/");
         const newNormalized = file.path.replace(/\\/gu, "/");
         if (oldNormalized === newNormalized) return;
-        const renamer = this.anchorRenamer;
-        if (renamer === undefined) return;
-        void this.handleVaultRename(renamer, {
+        if (this.anchorRenameWorkflow === undefined) return;
+        void this.handleVaultRename({
           kind,
           oldPath: oldNormalized,
           newPath: newNormalized
@@ -806,14 +813,17 @@ export default class TreeTalkPlugin extends Plugin {
   private async saveStoredAnchorRecord(record: StoredAnchorRecord): Promise<void> {
     const repository = this.repository;
     if (repository === undefined) return;
-    const loaded = await this.lifecycleQueue.run(() => repository.load(record.folder));
-    const conversation = loaded.conversation;
-    conversation.anchorFilePath = record.anchorFilePath;
-    conversation.anchorVaultId = record.anchorVaultId;
-    conversation.anchorFileCtime = record.anchorFileCtime;
-    conversation.revision = record.revision;
-    await this.lifecycleQueue.run(() =>
-      repository.save(record.folder, conversation, record.revision - 1)
+    await saveStoredAnchorRecord(
+      {
+        load: async (folder) =>
+          (await this.lifecycleQueue.run(() => repository.load(folder))).conversation,
+        save: (folder, conversation, expectedRevision) =>
+          this.lifecycleQueue.run(() =>
+            repository.save(folder, conversation, expectedRevision)
+          )
+      },
+      record,
+      new Date().toISOString()
     );
   }
 
@@ -853,16 +863,71 @@ export default class TreeTalkPlugin extends Plugin {
     }
   }
 
+  /** 启动时恢复未打开 active/history 会话的同 Vault 唯一 ctime 锚点。 */
+  private async relocateStoredAnchorsOnStartup(): Promise<void> {
+    const { currentVaultId, anchorFileIndex, repository, roots } = this;
+    if (
+      currentVaultId === undefined ||
+      anchorFileIndex === undefined ||
+      repository === undefined ||
+      roots === undefined
+    ) {
+      return;
+    }
+    const openIds = new Set(
+      Object.values(this.tabsStore.getSnapshot().tabs).map(
+        (tab) => tab.conversationId
+      )
+    );
+    const relocator = {
+      resolveCurrentPath: (path: string) => anchorFileIndex.resolveCurrentPath(path),
+      getCtime: (path: string) => anchorFileIndex.getCtime(path),
+      findCandidatesByCtime: (ctime: number) => anchorFileIndex.findCandidatesByCtime(ctime)
+    };
+    const persistence = {
+      load: async (folder: string) =>
+        (await this.lifecycleQueue.run(() => repository.load(folder))).conversation,
+      save: (folder: string, conversation: ConversationFile, expectedRevision: number) =>
+        this.lifecycleQueue.run(() =>
+          repository.save(folder, conversation, expectedRevision)
+        )
+    };
+    for (const area of [roots.active, roots.history]) {
+      let folders: string[];
+      try {
+        folders = await this.loadConversationFolders(area);
+      } catch (error) {
+        logWarning(`启动读取会话目录失败: ${area}`, error);
+        continue;
+      }
+      for (const folder of folders) {
+        const conversationId = folder.slice(folder.lastIndexOf("/") + 1);
+        if (openIds.has(conversationId)) continue;
+        try {
+          await relocateStoredAnchorRecord(
+            persistence,
+            folder,
+            currentVaultId,
+            relocator,
+            new Date().toISOString()
+          );
+        } catch (error) {
+          logWarning(`启动锚点重定位失败: ${conversationId}`, error);
+        }
+      }
+    }
+  }
+
   /** 处理 Vault rename 事件，并让工作流区分文件和文件夹事件。 */
-  private async handleVaultRename(
-    renamer: AnchorRenamer,
-    rename: VaultRename
-  ): Promise<void> {
+  private async handleVaultRename(rename: VaultRename): Promise<void> {
+    const renamer = this.anchorRenamer;
+    const workflow = this.anchorRenameWorkflow;
+    if (renamer === undefined || workflow === undefined) return;
     for (const [tabId, path] of this.pendingAnchors) {
       renamer.setPending(tabId, path);
     }
     const openTabs = Object.values(this.tabsStore.getSnapshot().tabs);
-    const result = await new AnchorRenameWorkflow(renamer).apply(
+    const result = await workflow.apply(
       rename,
       openTabs.map((tab) => tab.conversation),
       new Date().toISOString()
@@ -1998,9 +2063,30 @@ export default class TreeTalkPlugin extends Plugin {
     );
     const conversation = this.tabsStore.getTab(tab.id)?.conversation;
     if (conversation === undefined) return;
+    const relocatedConversation = await relocateTreeCaptureAnchor({
+      conversation,
+      currentVaultId: this.currentVaultId,
+      relocator:
+        this.anchorFileIndex === undefined
+          ? undefined
+          : {
+              resolveCurrentPath: (path) => this.anchorFileIndex!.resolveCurrentPath(path),
+              getCtime: (path) => this.anchorFileIndex!.getCtime(path),
+              findCandidatesByCtime: (ctime) =>
+                this.anchorFileIndex!.findCandidatesByCtime(ctime)
+            },
+      now: new Date().toISOString(),
+      updateConversation: (updated) => {
+        this.tabsStore.updateConversation(tab.id, () => updated);
+      },
+      flushPersistence: async () => {
+        this.persistenceScheduler.flush();
+        await this.persistence?.flush(tab.folder);
+      }
+    });
     await this.captureKnowledge({
       scope: "tree",
-      conversation
+      conversation: relocatedConversation
     });
   }
 

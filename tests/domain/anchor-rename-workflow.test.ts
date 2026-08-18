@@ -98,4 +98,52 @@ describe("AnchorRenameWorkflow", () => {
     expect(conversation.anchorFilePath).toBe("Notes/a.md");
     expect(result.openConversations[0]?.anchorFilePath).toBe("Notes/b.md");
   });
+
+  it("serializes each whole rename workflow so a later stored phase cannot overtake an earlier open phase", async () => {
+    let releaseFirstSave: (() => void) | undefined;
+    let markFirstSaveStarted: (() => void) | undefined;
+    const firstSaveStarted = new Promise<void>((resolve) => {
+      markFirstSaveStarted = resolve;
+    });
+    const firstSaveGate = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve;
+    });
+    const events: string[] = [];
+    let saves = 0;
+    const records = [stored("a", "Notes/a.md")];
+    const renamer = new AnchorRenamer({
+      loadStored: async () => records,
+      saveStored: async () => {
+        saves += 1;
+        events.push(`save-${String(saves)}`);
+        if (saves === 1) {
+          markFirstSaveStarted?.();
+          await firstSaveGate;
+        }
+      },
+      skipOpenConversationIds: new Set()
+    });
+    const workflow = new AnchorRenameWorkflow(renamer);
+    const openConversations = [open("Notes/a.md")];
+
+    const first = workflow.apply(
+      { kind: "file", oldPath: "Notes/a.md", newPath: "Notes/b.md" },
+      openConversations,
+      NOW
+    );
+    await firstSaveStarted;
+    const second = workflow.apply(
+      { kind: "file", oldPath: "Notes/b.md", newPath: "Notes/c.md" },
+      openConversations,
+      NOW
+    );
+    await Promise.resolve();
+
+    expect(events).toEqual(["save-1"]);
+    releaseFirstSave?.();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.openConversations[0]?.anchorFilePath).toBe("Notes/b.md");
+    expect(secondResult.openConversations[0]?.anchorFilePath).toBe("Notes/a.md");
+    expect(events).toEqual(["save-1", "save-2"]);
+  });
 });

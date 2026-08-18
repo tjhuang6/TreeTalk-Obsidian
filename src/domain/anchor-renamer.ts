@@ -77,15 +77,18 @@ function rewritePath(
  */
 export class AnchorRenamer {
   private readonly pending = new Map<string, string>();
-  private readonly queue: Promise<unknown> = Promise.resolve();
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly store: AnchorRenamerStore) {}
 
   // 串行队列：保证事件按到达顺序串行处理。
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.queue.then(operation, operation);
-    // 防止 rejection 蔓延到后续任务
-    next.catch(() => undefined);
+    // The queue tail always recovers, while callers still receive their own result.
+    this.queue = next.then(
+      () => undefined,
+      () => undefined
+    );
     return next;
   }
 

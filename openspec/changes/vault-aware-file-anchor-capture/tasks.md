@@ -29,3 +29,9 @@
 - [x] 5.1 增加路径修改、文件 rename/move、插件停用期间 rename 的唯一 ctime 恢复、删除、同路径异 Vault、旧数据重绑测试
 - [x] 5.2 更新 README 和 CHANGELOG，说明 Vault 身份、重新绑定和沉淀目录规则
 - [x] 5.3 执行 `openspec validate vault-aware-file-anchor-capture --strict` 与 `npm run check`，记录真实结果
+- [x] 5.4 审计补充（严格 RED→GREEN）：以 deferred gate/active counter 证明旧 `AnchorRenamer` 会并发 load；新增 whole-workflow 排队、深冻结 repository load 克隆保存、closed active/history 重定位及 tree capture 持久化重定位测试。
+
+### 审计 TDD 证据
+
+- RED：`npx vitest run tests/domain/anchor-renamer.test.ts tests/domain/anchor-rename-workflow.test.ts tests/domain/stored-anchor-workflow.test.ts` 在旧实现中报告 `expected 2 to be 1`（第二个 rename 在 gate 释放前进入 load）、`Cannot find module '../../src/domain/stored-anchor-workflow'`，以及 workflow 并发事件断言失败。
+- GREEN：新增 `stored-anchor-workflow` 后，相同聚焦套件 5 files / 41 tests 通过；完整 `npm run check` 为 107 files / 633 tests 通过。

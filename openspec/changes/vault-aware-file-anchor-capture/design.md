@@ -85,6 +85,12 @@ type AnchorStatus =
 
 rename 处理按事件串行。打开会话先更新 store，再通过现有 persistence 保存；未打开会话按 active/history 目录枚举，使用 repository `load/save` 和 expected revision 更新。打开会话 ID 在持久化扫描中跳过，避免双写。单个损坏会话只记录错误，不阻断其他会话。
 
+### D8：审计补充的事务与持久化边界
+
+rename 的 stored、open 与 pending 阶段 SHALL 由同一个长生命周期 `AnchorRenameWorkflow` 按事件完整串行，不能让后一个事件插入前一个事件的两个阶段之间。`AnchorRenamer` 的队尾必须在每次 enqueue 后回写为一个可恢复的 Promise，单次 rejection 不得毒化后续事件。
+
+repository `load()` 返回值视为不可变：stored rename 与 closed-session relocation SHALL 使用 `structuredClone` 生成候选、更新 path/revision/updatedAt，并以 load 时观察到的 revision 保存。启动除已打开标签外还 SHALL 枚举 closed active/history；仅 currentVaultId 匹配且 ctime 候选唯一时保存。tree capture 在任何写入前 SHALL 同步同 Vault verified relocation 到 tab store 并 flush 持久化；foreign、legacy、missing 与 ambiguous 保持原对象，由 preflight 以零写入拒绝。
+
 ## Risks / Trade-offs
 
 - `ctime` 不是跨文件系统的永久 ID。使用 Vault UUID 限定范围、候选唯一性检查和拒绝猜测，优先保证不写错位置。若外部工具在移动时重建文件并改变 ctime，状态会是 missing，用户需要显式重新绑定。

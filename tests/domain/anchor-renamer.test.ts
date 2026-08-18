@@ -163,34 +163,56 @@ describe("AnchorRenamer.open conversation path updates", () => {
     expect(open[0]?.anchorFilePath).toBe("Archive/Notes/sub/note.md");
   });
 
-  it("processes events serially even when called concurrently", async () => {
-    const order: string[] = [];
-    const open: ConversationFile[] = [
-      withAnchor({
-        anchorVaultId: VAULT_ID,
-        anchorFilePath: "Notes/a.md",
-        anchorFileCtime: CTIME
-      })
-    ];
-    const stored: StoredAnchorRecord[] = [makeStored()];
+  it("keeps a concurrent second rename from loading until the first operation releases", async () => {
+    let releaseFirstLoad: (() => void) | undefined;
+    const firstLoadGate = new Promise<void>((resolve) => {
+      releaseFirstLoad = resolve;
+    });
+    let loadCalls = 0;
+    let active = 0;
+    let maxConcurrent = 0;
     const renamer = new AnchorRenamer({
       loadStored: async () => {
-        order.push("load");
-        return stored;
+        loadCalls += 1;
+        active += 1;
+        maxConcurrent = Math.max(maxConcurrent, active);
+        if (loadCalls === 1) await firstLoadGate;
+        active -= 1;
+        return [];
       },
-      saveStored: async () => {
-        order.push("save");
-        return undefined;
-      },
+      saveStored: async () => undefined,
       skipOpenConversationIds: new Set()
     });
-    await Promise.all([
-      renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW),
-      renamer.applyFolderMove("Notes", "Archive/Notes", NOW),
-      renamer.applyExactRenameToOpen(open, "Notes/a.md", "Notes/c.md")
-    ]);
-    // 串行队列保证事件按入队顺序处理，不并发。
-    expect(order.indexOf("load")).toBeLessThan(order.indexOf("save"));
+
+    const first = renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW);
+    const second = renamer.applyFolderMove("Notes", "Archive/Notes", NOW);
+    await Promise.resolve();
+
+    expect(loadCalls).toBe(1);
+    expect(maxConcurrent).toBe(1);
+    releaseFirstLoad?.();
+    await Promise.all([first, second]);
+    expect(loadCalls).toBe(2);
+    expect(maxConcurrent).toBe(1);
+  });
+
+  it("runs the next queued rename after an operation rejects", async () => {
+    let calls = 0;
+    const renamer = new AnchorRenamer({
+      loadStored: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("first load fails");
+        return [];
+      },
+      saveStored: async () => undefined,
+      skipOpenConversationIds: new Set()
+    });
+
+    await expect(renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW)).rejects.toThrow(
+      "first load fails"
+    );
+    await expect(renamer.applyFolderMove("Notes", "Archive/Notes", NOW)).resolves.toBeNull();
+    expect(calls).toBe(2);
   });
 });
 

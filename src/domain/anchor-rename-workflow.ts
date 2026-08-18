@@ -18,40 +18,53 @@ export interface AnchorRenameWorkflowResult {
  * would rewrite anchors for unrelated sibling files.
  */
 export class AnchorRenameWorkflow {
+  private queue: Promise<void> = Promise.resolve();
+
   constructor(private readonly renamer: AnchorRenamer) {}
 
-  async apply(
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(operation, operation);
+    this.queue = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  }
+
+  apply(
     rename: VaultRename,
     openConversations: ConversationFile[],
     now: string
   ): Promise<AnchorRenameWorkflowResult> {
-    const updatedOpenConversations = openConversations.map(
-      (conversation) => structuredClone(conversation) as ConversationFile
-    );
-    if (rename.kind === "file") {
-      const stored = await this.renamer.applyExactRename(
+    return this.enqueue(async () => {
+      const updatedOpenConversations = openConversations.map(
+        (conversation) => structuredClone(conversation) as ConversationFile
+      );
+      if (rename.kind === "file") {
+        const stored = await this.renamer.applyExactRename(
+          rename.oldPath,
+          rename.newPath,
+          now
+        );
+        await this.renamer.applyExactRenameToOpen(
+          updatedOpenConversations,
+          rename.oldPath,
+          rename.newPath
+        );
+        return { stored, openConversations: updatedOpenConversations };
+      }
+
+      const stored = await this.renamer.applyFolderMove(
         rename.oldPath,
         rename.newPath,
         now
       );
-      await this.renamer.applyExactRenameToOpen(
+      await this.renamer.applyFolderMoveToOpen(
         updatedOpenConversations,
         rename.oldPath,
         rename.newPath
       );
       return { stored, openConversations: updatedOpenConversations };
-    }
-
-    const stored = await this.renamer.applyFolderMove(
-      rename.oldPath,
-      rename.newPath,
-      now
-    );
-    await this.renamer.applyFolderMoveToOpen(
-      updatedOpenConversations,
-      rename.oldPath,
-      rename.newPath
-    );
-    return { stored, openConversations: updatedOpenConversations };
+    });
   }
 }
