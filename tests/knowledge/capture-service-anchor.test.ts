@@ -87,6 +87,51 @@ describe("KnowledgeCaptureService anchor preflight", () => {
     expect(indexPath).toMatch(/^Projects\/system-design-tree\/.+\/节点列表\.md$/u);
   });
 
+  it.each([
+    ["foreign", { kind: "foreign-vault" } as AnchorStatus, "anchor-foreign-vault"],
+    ["legacy", { kind: "legacy-unverified" } as AnchorStatus, "anchor-legacy-unverified"],
+    ["missing", { kind: "missing" } as AnchorStatus, "anchor-missing"],
+    ["ambiguous", { kind: "ambiguous" } as AnchorStatus, "anchor-ambiguous"]
+  ])(
+    "rejects %s anchor capture with zero writes for both answer and tree",
+    async (_kind, status, code) => {
+      for (const scope of ["answer", "tree"] as const) {
+        const vault = new FakeVault();
+        const conversation = structuredClone(withAnchorTriple()) as ConversationFile;
+        const service = new KnowledgeCaptureService(
+          vault,
+          "TreeTalk 知识",
+          "TreeTalk",
+          { anchorStatusResolver: () => status }
+        );
+        const request =
+          scope === "answer"
+            ? (() => {
+                const node = conversation.nodes[conversation.currentNodeId];
+                if (node === undefined) throw new Error("Missing current node");
+                node.messages.push({
+                  id: "answer",
+                  role: "assistant",
+                  content: "answer",
+                  status: "complete",
+                  createdAt: NOW,
+                  updatedAt: NOW
+                });
+                return {
+                  scope,
+                  conversation,
+                  nodeId: node.id,
+                  messageId: "answer"
+                };
+              })()
+            : { scope, conversation };
+
+        await expect(service.capture(request, NOW)).rejects.toMatchObject({ code });
+        expect(vault.paths()).toEqual([]);
+      }
+    }
+  );
+
   it("rejects capture with zero writes when anchor is foreign", async () => {
     const vault = new FakeVault();
     const conversation = withAnchorTriple();

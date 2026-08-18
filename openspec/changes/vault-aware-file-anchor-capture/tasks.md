@@ -30,8 +30,9 @@
 - [x] 5.2 更新 README 和 CHANGELOG，说明 Vault 身份、重新绑定和沉淀目录规则
 - [x] 5.3 执行 `openspec validate vault-aware-file-anchor-capture --strict` 与 `npm run check`，记录真实结果
 - [x] 5.4 审计补充（严格 RED→GREEN）：以 deferred gate/active counter 证明旧 `AnchorRenamer` 会并发 load；新增 whole-workflow 排队、深冻结 repository load 克隆保存、closed active/history 重定位及 tree capture 持久化重定位测试。
+- [x] 5.5 早期独立审计复核（严格 RED→GREEN）：answer/tree 在任何写入前统一 anchor preflight；rename queue 在 operation 内读取最新 open tabs；closed record fresh-load 仅在 observed anchor 三元组仍匹配时合并保存；显式 pending 锚点无法验证时 fail closed 并保留 pending。
 
 ### 审计 TDD 证据
 
-- RED：`npx vitest run tests/domain/anchor-renamer.test.ts tests/domain/anchor-rename-workflow.test.ts tests/domain/stored-anchor-workflow.test.ts` 在旧实现中报告 `expected 2 to be 1`（第二个 rename 在 gate 释放前进入 load）、`Cannot find module '../../src/domain/stored-anchor-workflow'`，以及 workflow 并发事件断言失败。
-- GREEN：新增 `stored-anchor-workflow` 后，相同聚焦套件 5 files / 41 tests 通过；完整 `npm run check` 为 107 files / 633 tests 通过。
+- RED：本次依次运行 `npx vitest run tests/knowledge/capture-service-anchor.test.ts`（4 个 answer invalid-anchor case 错误地成功写入）、`npx vitest run tests/domain/anchor-rename-workflow.test.ts`（callback API 前等待 gate 超时）、`npx vitest run tests/domain/stored-anchor-workflow.test.ts`（save 返回 `undefined` 而非 saved/stale）、`npx vitest run tests/domain/anchor-renamer.test.ts`（stale save 仍被计入 update），以及 `npx vitest run tests/domain/first-message-anchor-decision.test.ts`（模块不存在）。
+- GREEN：聚焦套件 `npx vitest run tests/knowledge/capture-service-anchor.test.ts tests/domain/anchor-rename-workflow.test.ts tests/domain/anchor-renamer.test.ts tests/domain/stored-anchor-workflow.test.ts tests/domain/first-message-anchor-decision.test.ts` 为 5 files / 47 tests 通过；`openspec validate vault-aware-file-anchor-capture --strict` 通过；`npm run check` 为 108 files / 645 Vitest tests、328 regression tests 通过。

@@ -108,7 +108,7 @@ import {
   saveStoredAnchorRecord
 } from "./domain/stored-anchor-workflow";
 import { classifyAnchor, type AnchorStatus } from "./domain/anchor-status";
-import { verifiedFirstMessageAnchor } from "./domain/verified-first-message-anchor";
+import { decideFirstMessageAnchor } from "./domain/first-message-anchor-decision";
 import { ProgressiveRunCheckpointStore } from "./state/progressive-run-checkpoint-store";
 import { ActiveConversationStore } from "./tabs/active-conversation-store";
 import { ConversationTabsStore } from "./tabs/conversation-tabs-store";
@@ -792,8 +792,11 @@ export default class TreeTalkPlugin extends Plugin {
             conversationId: conversation.id,
             folder,
             anchorFilePath: conversation.anchorFilePath,
+            observedAnchorFilePath: conversation.anchorFilePath,
             anchorVaultId: conversation.anchorVaultId,
+            observedAnchorVaultId: conversation.anchorVaultId,
             anchorFileCtime: conversation.anchorFileCtime,
+            observedAnchorFileCtime: conversation.anchorFileCtime,
             revision: conversation.revision
           });
         } catch (error) {
@@ -813,10 +816,12 @@ export default class TreeTalkPlugin extends Plugin {
       .map((path) => path.slice(0, -"/tree.json".length));
   }
 
-  private async saveStoredAnchorRecord(record: StoredAnchorRecord): Promise<void> {
+  private async saveStoredAnchorRecord(
+    record: StoredAnchorRecord
+  ): Promise<"saved" | "stale"> {
     const repository = this.repository;
-    if (repository === undefined) return;
-    await saveStoredAnchorRecord(
+    if (repository === undefined) return "stale";
+    return await saveStoredAnchorRecord(
       {
         load: async (folder) =>
           (await this.lifecycleQueue.run(() => repository.load(folder))).conversation,
@@ -929,14 +934,18 @@ export default class TreeTalkPlugin extends Plugin {
     for (const [tabId, path] of this.pendingAnchors) {
       renamer.setPending(tabId, path);
     }
-    const openTabs = Object.values(this.tabsStore.getSnapshot().tabs);
     const result = await workflow.apply(
       rename,
-      openTabs.map((tab) => tab.conversation),
+      () =>
+        Object.values(this.tabsStore.getSnapshot().tabs).map(
+          (tab) => tab.conversation
+        ),
       new Date().toISOString()
     );
-    for (const [index, updated] of result.openConversations.entries()) {
-      const tab = openTabs[index];
+    for (const updated of result.openConversations) {
+      const tab = Object.values(this.tabsStore.getSnapshot().tabs).find(
+        (candidate) => candidate.conversationId === updated.id
+      );
       if (tab !== undefined && updated.anchorFilePath !== tab.conversation.anchorFilePath) {
         this.tabsStore.updateConversation(tab.id, () => updated);
       }
@@ -1338,7 +1347,8 @@ export default class TreeTalkPlugin extends Plugin {
           ? activeFilePath
           : undefined;
     const anchorFilePath = pendingAnchor ?? fallbackAnchor;
-    const anchor = verifiedFirstMessageAnchor({
+    const anchorDecision = decideFirstMessageAnchor({
+      explicitPending: pendingAnchor !== undefined,
       filePath: anchorFilePath,
       vaultId: this.currentVaultId,
       fileCtime:
@@ -1346,6 +1356,11 @@ export default class TreeTalkPlugin extends Plugin {
           ? undefined
           : await this.readCtimeForAnchor(anchorFilePath)
     });
+    if (anchorDecision.kind === "reject") {
+      new Notice(anchorDecision.notice);
+      return;
+    }
+    const anchor = anchorDecision.anchor;
     const userMessageId = crypto.randomUUID();
     const childInput = {
       text,

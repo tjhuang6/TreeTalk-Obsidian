@@ -16,8 +16,11 @@ function stored(id: string, path: string): StoredAnchorRecord {
     conversationId: id,
     folder: `.obsidian/treetalk-data/active/${id}`,
     anchorFilePath: path,
+    observedAnchorFilePath: path,
     anchorVaultId: VAULT_ID,
+    observedAnchorVaultId: VAULT_ID,
     anchorFileCtime: CTIME,
+    observedAnchorFileCtime: CTIME,
     revision: 1
   };
 }
@@ -44,7 +47,7 @@ describe("AnchorRenameWorkflow", () => {
 
     const result = await workflow.apply(
       { kind: "file", oldPath: "Notes/a.md", newPath: "Archive/a.md" },
-      openConversations,
+      () => openConversations,
       NOW
     );
 
@@ -71,7 +74,7 @@ describe("AnchorRenameWorkflow", () => {
 
     const result = await workflow.apply(
       { kind: "folder", oldPath: "Notes", newPath: "Archive/Notes" },
-      openConversations,
+      () => openConversations,
       NOW
     );
 
@@ -91,7 +94,7 @@ describe("AnchorRenameWorkflow", () => {
 
     const result = await workflow.apply(
       { kind: "file", oldPath: "Notes/a.md", newPath: "Notes/b.md" },
-      [conversation],
+      () => [conversation],
       NOW
     );
 
@@ -100,7 +103,7 @@ describe("AnchorRenameWorkflow", () => {
   });
 
   it("does not rewrite a same-path foreign open anchor", async () => {
-    const saveStored = async (): Promise<void> => undefined;
+    const saveStored = async (): Promise<undefined> => undefined;
     const renamer = new AnchorRenamer({
       loadStored: async () => [],
       saveStored,
@@ -112,7 +115,7 @@ describe("AnchorRenameWorkflow", () => {
 
     const result = await workflow.apply(
       { kind: "file", oldPath: "Notes/a.md", newPath: "Notes/b.md" },
-      [foreign],
+      () => [foreign],
       NOW
     );
 
@@ -139,6 +142,7 @@ describe("AnchorRenameWorkflow", () => {
       saveStored: async () => {
         saves += 1;
         events.push(`stored-${String(saves)}`);
+        return undefined;
       },
       skipOpenConversationIds: new Set()
     });
@@ -157,13 +161,13 @@ describe("AnchorRenameWorkflow", () => {
 
     const first = workflow.apply(
       { kind: "file", oldPath: "Notes/a.md", newPath: "Notes/b.md" },
-      openConversations,
+      () => openConversations,
       NOW
     );
     await firstOpenStarted;
     const second = workflow.apply(
       { kind: "file", oldPath: "Notes/b.md", newPath: "Notes/c.md" },
-      openConversations,
+      () => openConversations,
       NOW
     );
     await Promise.resolve();
@@ -179,5 +183,54 @@ describe("AnchorRenameWorkflow", () => {
       "open-start-2",
       "open-finish-2"
     ]);
+  });
+
+  it("reads open conversations inside the serialized operation so B→C does not reuse stale A", async () => {
+    let releaseFirstOpen: (() => void) | undefined;
+    let markFirstOpenStarted: (() => void) | undefined;
+    const firstOpenStarted = new Promise<void>((resolve) => {
+      markFirstOpenStarted = resolve;
+    });
+    const firstOpenGate = new Promise<void>((resolve) => {
+      releaseFirstOpen = resolve;
+    });
+    const records = [stored("a", "Notes/a.md")];
+    const renamer = new AnchorRenamer({
+      loadStored: async () => records,
+      saveStored: async () => undefined,
+      skipOpenConversationIds: new Set()
+    });
+    let latest = [open("Notes/a.md")];
+    let openPhases = 0;
+    vi.spyOn(renamer, "applyExactRenameToOpen").mockImplementation(async (conversations) => {
+      openPhases += 1;
+      if (openPhases === 1) {
+        markFirstOpenStarted?.();
+        await firstOpenGate;
+        latest = [open("Notes/b.md")];
+      }
+      const conversation = conversations[0];
+      if (conversation !== undefined) {
+        conversation.anchorFilePath = openPhases === 1 ? "Notes/b.md" : "Notes/c.md";
+      }
+    });
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
+
+    const first = workflow.apply(
+      { kind: "file", oldPath: "Notes/a.md", newPath: "Notes/b.md" },
+      () => latest,
+      NOW
+    );
+    await firstOpenStarted;
+    const second = workflow.apply(
+      { kind: "file", oldPath: "Notes/b.md", newPath: "Notes/c.md" },
+      () => latest,
+      NOW
+    );
+    releaseFirstOpen?.();
+    const [, secondResult] = await Promise.all([first, second]);
+
+    expect(records[0]?.anchorFilePath).toBe("Notes/c.md");
+    expect(secondResult.openConversations[0]?.anchorFilePath).toBe("Notes/c.md");
   });
 });

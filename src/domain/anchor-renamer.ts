@@ -5,8 +5,12 @@ export interface StoredAnchorRecord {
   conversationId: string;
   folder: string;
   anchorFilePath: string;
+  /** Anchor triple observed during enumeration, before this rename's rewrite. */
+  observedAnchorFilePath: string;
   anchorVaultId: string;
+  observedAnchorVaultId: string;
   anchorFileCtime: number;
+  observedAnchorFileCtime: number;
   revision: number;
 }
 
@@ -17,7 +21,7 @@ export interface AnchorRenamerStore {
    * 单条保存：调用方负责 expected revision 校验（沿用 ConversationRepository 的
    * revision-conflict 语义），由本服务透传异常并隔离。
    */
-  saveStored: (record: StoredAnchorRecord) => Promise<void>;
+  saveStored: (record: StoredAnchorRecord) => Promise<"saved" | "stale" | undefined>;
   /** 当前在 tab 中已打开的 conversation IDs，跳过以避免双写。 */
   skipOpenConversationIds: Set<string>;
   onError?: (error: unknown, record: StoredAnchorRecord) => void;
@@ -154,7 +158,8 @@ export class AnchorRenamer {
           revision: record.revision + 1
         };
         try {
-          await this.store.saveStored(updated);
+          const saveResult = await this.store.saveStored(updated);
+          if (saveResult === "stale") continue;
           record.anchorFilePath = next;
           updates.push({
             conversationId: record.conversationId,
@@ -211,7 +216,8 @@ export class AnchorRenamer {
           revision: record.revision + 1
         };
         try {
-          await this.store.saveStored(updated);
+          const saveResult = await this.store.saveStored(updated);
+          if (saveResult === "stale") continue;
           record.anchorFilePath = next;
           updates.push({
             conversationId: record.conversationId,

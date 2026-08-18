@@ -688,6 +688,9 @@ export class KnowledgeCaptureService {
       throw new Error("Unsupported capture scope");
     }
 
+    // Every capture route must validate the anchor before it can write anything.
+    const { resolvedPath } = this.preflightAnchor(request.conversation);
+
     if (request.scope === "answer") {
       const node = requireNode(request.conversation, request.nodeId);
       const message = requireMessage(node, request.messageId);
@@ -706,9 +709,6 @@ export class KnowledgeCaptureService {
       await this.vault.write(path, `# ${title}\n\n${message.content}\n`);
       return path;
     }
-
-    // 沉淀前锚点状态预检：失败时直接抛出，无任何写入。
-    const { resolvedPath } = this.preflightAnchor(request.conversation);
 
     if (hasStreamingResponse(request.conversation)) {
       throw new Error(

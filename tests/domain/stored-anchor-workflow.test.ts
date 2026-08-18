@@ -36,8 +36,11 @@ function record(): StoredAnchorRecord {
     conversationId: "c1",
     folder: ".obsidian/treetalk-data/active/c1",
     anchorVaultId: VAULT_ID,
+    observedAnchorVaultId: VAULT_ID,
     anchorFilePath: "Notes/new.md",
+    observedAnchorFilePath: "Notes/old.md",
     anchorFileCtime: CTIME,
+    observedAnchorFileCtime: CTIME,
     revision: 4
   };
 }
@@ -79,6 +82,42 @@ describe("saveStoredAnchorRecord", () => {
       }),
       10
     );
+  });
+
+  it("merges a rename onto newer loaded content only when the observed anchor triple still matches", async () => {
+    const loaded = conversation({ revision: 10, title: "newer title" });
+    const save = vi.fn(async () => undefined);
+
+    const result = await saveStoredAnchorRecord(
+      { load: async () => loaded, save },
+      record(),
+      NOW
+    );
+
+    expect(result).toBe("saved");
+    expect(save).toHaveBeenCalledWith(
+      record().folder,
+      expect.objectContaining({ title: "newer title", revision: 11, anchorFilePath: "Notes/new.md" }),
+      10
+    );
+  });
+
+  it("does not save a stale rename after a concurrent anchor rebind", async () => {
+    const loaded = conversation({
+      revision: 10,
+      anchorFilePath: "Notes/rebound.md",
+      anchorFileCtime: CTIME + 1
+    });
+    const save = vi.fn(async () => undefined);
+
+    const result = await saveStoredAnchorRecord(
+      { load: async () => loaded, save },
+      record(),
+      NOW
+    );
+
+    expect(result).toBe("stale");
+    expect(save).not.toHaveBeenCalled();
   });
 });
 

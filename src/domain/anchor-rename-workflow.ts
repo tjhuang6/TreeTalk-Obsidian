@@ -36,12 +36,13 @@ export class AnchorRenameWorkflow {
 
   apply(
     rename: VaultRename,
-    openConversations: ConversationFile[],
+    getOpenConversations: () => ConversationFile[],
     now: string
   ): Promise<AnchorRenameWorkflowResult> {
     return this.enqueue(async () => {
       const currentVaultId = this.currentVaultId ?? "";
-      const updatedOpenConversations = openConversations.map(
+      // Read current tabs only after all preceding rename work has completed.
+      const updatedOpenConversations = getOpenConversations().map(
         (conversation) => structuredClone(conversation) as ConversationFile
       );
       if (rename.kind === "file") {

@@ -42,15 +42,31 @@ export function prepareStoredAnchorSave(
   return parseConversation(updated);
 }
 
-/** Saves a rename update with the revision observed by the preceding load. */
+function matchesObservedAnchor(
+  loaded: ConversationFile,
+  record: StoredAnchorRecord
+): boolean {
+  return (
+    loaded.anchorFilePath === record.observedAnchorFilePath &&
+    loaded.anchorVaultId === record.observedAnchorVaultId &&
+    loaded.anchorFileCtime === record.observedAnchorFileCtime
+  );
+}
+
+/**
+ * Saves a rename update only when a fresh load still has the anchor triple that
+ * was observed during enumeration. Newer non-anchor changes are merged safely.
+ */
 export async function saveStoredAnchorRecord(
   persistence: StoredAnchorPersistencePort,
   record: StoredAnchorRecord,
   now: string
-): Promise<void> {
+): Promise<"saved" | "stale"> {
   const loaded = await persistence.load(record.folder);
+  if (!matchesObservedAnchor(loaded, record)) return "stale";
   const updated = prepareStoredAnchorSave(loaded, record, now);
   await persistence.save(record.folder, updated, loaded.revision);
+  return "saved";
 }
 
 /**

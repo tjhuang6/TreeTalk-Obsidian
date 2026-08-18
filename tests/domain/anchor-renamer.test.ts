@@ -16,8 +16,11 @@ function makeStored(): StoredAnchorRecord {
     conversationId: "c1",
     folder: ".obsidian/treetalk-data/active/c1",
     anchorFilePath: "Notes/a.md",
+    observedAnchorFilePath: "Notes/a.md",
     anchorVaultId: VAULT_ID,
+    observedAnchorVaultId: VAULT_ID,
     anchorFileCtime: CTIME,
+    observedAnchorFileCtime: CTIME,
     revision: 1
   };
 }
@@ -43,6 +46,22 @@ describe("AnchorRenamer.applyExactRename", () => {
       })
     ]);
     expect(stored[0]?.anchorFilePath).toBe("Notes/b.md");
+  });
+
+  it("does not report or mutate an update when the fresh save rejects a stale observed anchor", async () => {
+    const stored = [makeStored()];
+    const saveStored = vi.fn(async () => "stale" as const);
+    const renamer = new AnchorRenamer({
+      loadStored: async () => stored,
+      saveStored,
+      skipOpenConversationIds: new Set()
+    });
+
+    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW);
+
+    expect(saveStored).toHaveBeenCalledOnce();
+    expect(result).toBeNull();
+    expect(stored[0]?.anchorFilePath).toBe("Notes/a.md");
   });
 
   it("returns null when no stored anchor matches", async () => {
