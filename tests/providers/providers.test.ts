@@ -41,7 +41,7 @@ describe("provider request adapters", () => {
     expect(provider.kind).toBe("deepseek");
     expect(
       provider.buildRequest({ ...INPUT, model: "deepseek-v4-flash" }, resolved).url
-    ).toBe("https://api.deepseek.com/anthropic/v1/messages");
+    ).toBe("https://api.deepseek.com/chat/completions");
   });
 
   it("builds the MiniMax preset URL as an Anthropic messages request", () => {
@@ -69,24 +69,23 @@ describe("provider request adapters", () => {
   });
 
 
-  it("uses the official DeepSeek Anthropic transport without enabling web search", () => {
+  it("uses DeepSeek Chat Completions without web search", () => {
     const request = new DeepSeekProvider().buildRequest(
       { ...INPUT, model: "deepseek-v4-flash" },
       profile("deepseek")
     );
-    expect(request.url).toBe("https://api.deepseek.com/anthropic/v1/messages");
-    expect(request.responseFormat).toBe("anthropic");
+    expect(request.url).toBe("https://api.deepseek.com/chat/completions");
+    expect(request.responseFormat).toBe("openai");
     expect(request.body).toMatchObject({
       model: "deepseek-v4-flash",
-      stream: true,
-      system: "Be precise"
+      stream: true
     });
     expect(request.body).not.toHaveProperty("tools");
     expect(request.body).not.toHaveProperty("tool_choice");
     expect(request.body).not.toHaveProperty("prompt_cache_key");
   });
 
-  it("keeps the official DeepSeek Anthropic transport after web search is disabled", () => {
+  it("uses Anthropic only while DeepSeek native web search is enabled", () => {
     const provider = new DeepSeekProvider();
     const deepseekProfile = profile("deepseek");
     deepseekProfile.baseUrl = "https://api.deepseek.com/anthropic";
@@ -101,8 +100,8 @@ describe("provider request adapters", () => {
     );
 
     expect(online.url).toBe("https://api.deepseek.com/anthropic/v1/messages");
-    expect(offline.url).toBe("https://api.deepseek.com/anthropic/v1/messages");
-    expect(offline.responseFormat).toBe("anthropic");
+    expect(offline.url).toBe("https://api.deepseek.com/chat/completions");
+    expect(offline.responseFormat).toBe("openai");
     expect(offline.body).not.toHaveProperty("tools");
     expect(offline.body).not.toHaveProperty("tool_choice");
   });
@@ -121,7 +120,7 @@ describe("provider request adapters", () => {
         { ...INPUT, model: "deepseek-v4-flash", webSearchEnabled: false },
         current
       );
-      expect(request.url).toBe("https://api.deepseek.com/anthropic/v1/messages");
+      expect(request.url).toBe("https://api.deepseek.com/chat/completions");
     }
   });
 

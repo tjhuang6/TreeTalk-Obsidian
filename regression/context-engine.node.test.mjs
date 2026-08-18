@@ -173,13 +173,14 @@ void test("OpenAI and DeepSeek request cache usage without exposing fake cache c
   const deepseek = new DeepSeekProvider().buildRequest({ ...input, model: "deepseek-v4-flash" }, {
     id: "deepseek", name: "DeepSeek", kind: "deepseek", apiKey: "secret", baseUrl: ""
   });
-  assert.equal(deepseek.url, "https://api.deepseek.com/anthropic/v1/messages");
-  assert.equal(deepseek.responseFormat, "anthropic");
+  assert.equal(deepseek.url, "https://api.deepseek.com/chat/completions");
+  assert.equal(deepseek.responseFormat, "openai");
+  assert.deepEqual(deepseek.body.stream_options, { include_usage: true });
   assert.equal("tools" in deepseek.body, false);
   assert.equal("prompt_cache_key" in deepseek.body, false);
 });
 
-void test("DeepSeek keeps the working Anthropic transport after web search is disabled", () => {
+void test("DeepSeek returns to Chat Completions after web search is disabled", () => {
   const { DeepSeekProvider } = load("src/providers/deepseek-provider.js");
   const provider = new DeepSeekProvider();
   const profile = {
@@ -205,13 +206,13 @@ void test("DeepSeek keeps the working Anthropic transport after web search is di
   );
 
   assert.equal(online.url, "https://api.deepseek.com/anthropic/v1/messages");
-  assert.equal(offline.url, "https://api.deepseek.com/anthropic/v1/messages");
-  assert.equal(offline.responseFormat, "anthropic");
+  assert.equal(offline.url, "https://api.deepseek.com/chat/completions");
+  assert.equal(offline.responseFormat, "openai");
   assert.equal("tools" in offline.body, false);
   assert.equal("tool_choice" in offline.body, false);
 });
 
-void test("DeepSeek canonicalizes official base URL variants before choosing a transport", () => {
+void test("DeepSeek canonicalizes official base URL variants for Chat Completions", () => {
   const { DeepSeekProvider } = load("src/providers/deepseek-provider.js");
   const provider = new DeepSeekProvider();
   const input = {
@@ -233,7 +234,7 @@ void test("DeepSeek canonicalizes official base URL variants before choosing a t
       apiKey: "secret",
       baseUrl
     });
-    assert.equal(request.url, "https://api.deepseek.com/anthropic/v1/messages");
+    assert.equal(request.url, "https://api.deepseek.com/chat/completions");
   }
 });
 

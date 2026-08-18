@@ -1,7 +1,3 @@
-function join(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/u, "")}/${path.replace(/^\/+/u, "")}`;
-}
-
 export function deepSeekApiRoot(baseUrl: string): string {
   const configured =
     baseUrl.trim().length > 0 ? baseUrl.trim() : "https://api.deepseek.com";
@@ -16,12 +12,4 @@ export function deepSeekApiRoot(baseUrl: string): string {
   return configured
     .replace(/\/+$/u, "")
     .replace(/\/(?:anthropic(?:\/v1(?:\/messages)?)?|chat\/completions)$/u, "");
-}
-
-export function deepSeekAnthropicBaseUrl(baseUrl: string): string {
-  return join(deepSeekApiRoot(baseUrl), "anthropic");
-}
-
-export function deepSeekAnthropicMessagesUrl(baseUrl: string): string {
-  return join(deepSeekAnthropicBaseUrl(baseUrl), "v1/messages");
 }

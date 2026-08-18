@@ -26,31 +26,59 @@ function turnInput(
 }
 
 describe("Pi provider transport", () => {
-  it("routes DeepSeek through the normalized Anthropic messages endpoint", () => {
-    for (const baseUrl of [
-      "",
-      "https://api.deepseek.com",
-      "https://api.deepseek.com/anthropic",
-      "https://api.deepseek.com/v1/messages"
-    ]) {
-      const request = buildPiProviderRequest(turnInput("deepseek", baseUrl));
-      expect(request.url).toBe("https://api.deepseek.com/anthropic/v1/messages");
-      expect(request.responseFormat).toBe("anthropic");
-      expect(request.body).toMatchObject({
-        thinking: { type: "enabled" },
-        messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }]
-      });
-    }
+  it("routes DeepSeek through Chat Completions with OpenAI tool semantics", () => {
+    const request = buildPiProviderRequest({
+      ...turnInput("deepseek", "https://api.deepseek.com"),
+      messages: [
+        {
+          role: "assistant",
+          content: "",
+          reasoningContent: "reasoning",
+          toolCalls: [{ id: "call-1", name: "expand_context", arguments: { level: 1 } }]
+        }
+      ],
+      tools: [
+        {
+          name: "expand_context",
+          description: "Expand context",
+          parameters: { type: "object", properties: { level: { type: "number" } } }
+        }
+      ],
+      toolChoice: "auto"
+    });
+
+    expect(request.url).toBe("https://api.deepseek.com/chat/completions");
+    expect(request.responseFormat).toBe("openai");
+    expect(request.body).toMatchObject({
+      thinking: { type: "enabled" },
+      tool_choice: "auto",
+      messages: [
+        { role: "system", content: "Be precise" },
+        {
+          role: "assistant",
+          content: null,
+          reasoning_content: "reasoning",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "expand_context", arguments: '{"level":1}' }
+            }
+          ]
+        }
+      ]
+    });
   });
 
-  it("parses a DeepSeek Anthropic response including thinking", () => {
+  it("parses a DeepSeek Chat Completions response including reasoning", () => {
     expect(
       parsePiProviderResponse(turnInput("deepseek").profile, {
-        content: [
-          { type: "thinking", thinking: "reasoning" },
-          { type: "text", text: "answer" }
-        ],
-        stop_reason: "end_turn"
+        choices: [
+          {
+            message: { content: "answer", reasoning_content: "reasoning" },
+            finish_reason: "stop"
+          }
+        ]
       })
     ).toMatchObject({ text: "answer", thinking: "reasoning", stopReason: "stop" });
   });

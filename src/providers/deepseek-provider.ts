@@ -14,7 +14,6 @@ import {
   normalizeOpenAiCompatibleUsage
 } from "./stream-parser";
 import {
-  deepSeekAnthropicBaseUrl,
   deepSeekApiRoot
 } from "./deepseek-url";
 
@@ -104,16 +103,6 @@ function parseAnthropicBuffered(value: unknown): ProviderEvent[] {
   return events;
 }
 
-function shouldUseAnthropicTransport(baseUrl: string): boolean {
-  const configured = baseUrl.trim();
-  if (configured.length === 0) return true;
-  try {
-    return new URL(configured).hostname.toLowerCase() === "api.deepseek.com";
-  } catch {
-    return /api\.deepseek\.com/iu.test(configured);
-  }
-}
-
 function anthropicRequest(
   input: ProviderInput,
   profile: ProviderProfile
@@ -125,7 +114,7 @@ function anthropicRequest(
     Math.min(5, Math.trunc(input.webSearchMaxUses ?? 5))
   );
   return {
-    url: join(deepSeekAnthropicBaseUrl(profile.baseUrl), "v1/messages"),
+    url: join(join(deepSeekApiRoot(profile.baseUrl), "anthropic"), "v1/messages"),
     method: "POST",
     headers: {
       "x-api-key": profile.apiKey,
@@ -162,7 +151,7 @@ export class DeepSeekProvider implements ProviderAdapter {
   readonly kind = "deepseek";
 
   buildRequest(input: ProviderInput, profile: ProviderProfile): ProviderRequest {
-    if (input.webSearchEnabled === true || shouldUseAnthropicTransport(profile.baseUrl)) {
+    if (input.webSearchEnabled === true) {
       return anthropicRequest(input, profile);
     }
 
