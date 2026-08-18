@@ -1,0 +1,31 @@
+# 任务列表：Vault 感知的文件锚点与沉淀路由
+
+## 1. Vault 身份与领域模型
+
+- [ ] 1.1 以 TDD 新增 `VaultIdentityStore`：创建、复用、非法 marker 拒绝；marker 位于 `<configDir>/treetalk-vault-id.json`
+- [ ] 1.2 扩展 `ConversationFile`/schema：支持 `anchorVaultId`、`anchorFileCtime`，保持路径-only 旧会话可读
+- [ ] 1.3 扩展 tree commands：首条消息原子写入完整锚点三元组，后续消息不得补写或覆盖；补 RED→GREEN 测试
+
+## 2. 锚点状态与路径解析
+
+- [ ] 2.1 新增纯领域锚点状态判定及路径前缀重映射函数，覆盖 none/verified/foreign/legacy/missing/ambiguous
+- [ ] 2.2 新增 Obsidian 文件目录适配器：按路径读取 Markdown ctime，并按 ctime 查找唯一候选
+- [ ] 2.3 实现启动/沉淀前重定位：同 Vault 唯一候选更新路径；零候选或多候选拒绝猜测
+
+## 3. Rename 同步与显式重新绑定
+
+- [ ] 3.1 注册 Vault rename 事件，串行更新 pending anchor 和全部打开会话
+- [ ] 3.2 更新未打开 active/history 会话，跳过已打开 conversation ID，使用 repository revision 保存并隔离单会话错误
+- [ ] 3.3 文件右键支持对 legacy/foreign/missing/ambiguous 锚点显式重新绑定；有效同 Vault 锚点仍冻结
+
+## 4. 沉淀路由和用户反馈
+
+- [ ] 4.1 `KnowledgeCaptureService` 在首次 write 前完成锚点状态预检；外来、未验证、缺失和歧义状态保证零写入
+- [ ] 4.2 保证同一最新锚点路径统一使用 `<anchorDir>/<anchorStem>-tree/` 归组根目录，多个会话和目录预存在场景均有测试
+- [ ] 4.3 `main.ts` 将锚点错误 code 映射为中文 Notice，不再显示笼统沉淀失败
+
+## 5. 回归与文档
+
+- [ ] 5.1 增加路径修改、文件 rename/move、插件停用期间 rename 的唯一 ctime 恢复、删除、同路径异 Vault、旧数据重绑测试
+- [ ] 5.2 更新 README 和 CHANGELOG，说明 Vault 身份、重新绑定和沉淀目录规则
+- [ ] 5.3 执行 `openspec validate vault-aware-file-anchor-capture --strict` 与 `npm run check`，记录真实结果
