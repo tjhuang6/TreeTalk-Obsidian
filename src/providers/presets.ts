@@ -52,8 +52,8 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     wire: "deepseek",
     baseUrl: "https://api.deepseek.com",
     aliases: [],
-    models: ["deepseek-chat", "deepseek-reasoner"],
-    defaultModel: "deepseek-chat",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+    defaultModel: "deepseek-v4-flash",
     supportsWebSearch: true,
     supportsThinking: true
   },
