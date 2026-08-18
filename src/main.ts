@@ -4,6 +4,7 @@ import {
   Plugin,
   requestUrl,
   TFile,
+  TFolder,
   type Menu
 } from "obsidian";
 import { ArchiveService } from "./archive/archive-service";
@@ -96,8 +97,13 @@ import {
   type AnchorRenamerStore,
   type StoredAnchorRecord
 } from "./domain/anchor-renamer";
+import {
+  AnchorRenameWorkflow,
+  type VaultRename
+} from "./domain/anchor-rename-workflow";
 import { relocateVerifiedAnchor } from "./domain/anchor-relocator";
 import { classifyAnchor, type AnchorStatus } from "./domain/anchor-status";
+import { verifiedFirstMessageAnchor } from "./domain/verified-first-message-anchor";
 import { ProgressiveRunCheckpointStore } from "./state/progressive-run-checkpoint-store";
 import { ActiveConversationStore } from "./tabs/active-conversation-store";
 import { ConversationTabsStore } from "./tabs/conversation-tabs-store";
@@ -521,28 +527,22 @@ export default class TreeTalkPlugin extends Plugin {
         }
       })
     );
-    // Vault rename 事件：串行更新 pending 锚点、已打开会话和未打开会话。
+    // Vault rename 事件：文件与文件夹必须走不同的重映射路径。
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        if (!(file instanceof TFile) || !isMarkdownPath(file.path)) return;
+        const kind = file instanceof TFile ? "file" : file instanceof TFolder ? "folder" : undefined;
+        if (kind === "file" && !isMarkdownPath(file.path)) return;
+        if (kind === undefined) return;
         const oldNormalized = oldPath.replace(/\\/gu, "/");
         const newNormalized = file.path.replace(/\\/gu, "/");
         if (oldNormalized === newNormalized) return;
         const renamer = this.anchorRenamer;
         if (renamer === undefined) return;
-        const oldFolder = oldNormalized.includes("/")
-          ? oldNormalized.slice(0, oldNormalized.lastIndexOf("/"))
-          : "";
-        const newFolder = newNormalized.includes("/")
-          ? newNormalized.slice(0, newNormalized.lastIndexOf("/"))
-          : "";
-        void this.handleVaultRename(
-          renamer,
-          oldNormalized,
-          newNormalized,
-          oldFolder,
-          newFolder
-        );
+        void this.handleVaultRename(renamer, {
+          kind,
+          oldPath: oldNormalized,
+          newPath: newNormalized
+        });
       })
     );
     await this.saveTabsWorkspace();
@@ -617,6 +617,7 @@ export default class TreeTalkPlugin extends Plugin {
 
   clearPendingAnchor(tabId: string): void {
     this.pendingAnchors.delete(tabId);
+    this.anchorRenamer?.clearPending(tabId);
     this.notifyAnchorChipListeners();
   }
 
@@ -642,6 +643,7 @@ export default class TreeTalkPlugin extends Plugin {
       return;
     }
     this.pendingAnchors.set(tab.id, filePath);
+    this.anchorRenamer?.setPending(tab.id, filePath);
     this.notifyAnchorChipListeners();
     new Notice(`已锚定到 ${filePath}，发送首条消息后生效`);
   }
@@ -668,6 +670,7 @@ export default class TreeTalkPlugin extends Plugin {
     if (status.kind === "none") {
       // 未锚定的对话：回退为首次锚定。
       this.pendingAnchors.set(tab.id, filePath);
+      this.anchorRenamer?.setPending(tab.id, filePath);
       this.notifyAnchorChipListeners();
       new Notice(`已锚定到 ${filePath}，发送首条消息后生效`);
       return;
@@ -690,6 +693,7 @@ export default class TreeTalkPlugin extends Plugin {
     updated.updatedAt = new Date().toISOString();
     this.tabsStore.updateConversation(tab.id, () => updated);
     this.pendingAnchors.delete(tab.id);
+    this.anchorRenamer?.clearPending(tab.id);
     this.notifyAnchorChipListeners();
     try {
       this.persistenceScheduler.flush();
@@ -849,45 +853,38 @@ export default class TreeTalkPlugin extends Plugin {
     }
   }
 
-  /** 处理 Vault rename 事件：精确改名 + 父文件夹移动 + pending 锚点同步。 */
+  /** 处理 Vault rename 事件，并让工作流区分文件和文件夹事件。 */
   private async handleVaultRename(
     renamer: AnchorRenamer,
-    oldPath: string,
-    newPath: string,
-    oldFolder: string,
-    newFolder: string
+    rename: VaultRename
   ): Promise<void> {
-    // 1. 精确文件重命名：更新未打开会话 + 打开会话 + pending 锚点。
-    const exactResult = await renamer.applyExactRename(
-      oldPath,
-      newPath,
+    for (const [tabId, path] of this.pendingAnchors) {
+      renamer.setPending(tabId, path);
+    }
+    const openTabs = Object.values(this.tabsStore.getSnapshot().tabs);
+    const result = await new AnchorRenameWorkflow(renamer).apply(
+      rename,
+      openTabs.map((tab) => tab.conversation),
       new Date().toISOString()
     );
-    if (exactResult !== null && exactResult.updates.length > 0) {
-      for (const update of exactResult.updates) {
+    for (const [index, updated] of result.openConversations.entries()) {
+      const tab = openTabs[index];
+      if (tab !== undefined && updated.anchorFilePath !== tab.conversation.anchorFilePath) {
+        this.tabsStore.updateConversation(tab.id, () => updated);
+      }
+    }
+    if (result.stored !== null) {
+      for (const update of result.stored.updates) {
         logWarning(
           `rename 已更新: ${update.previousPath} → ${update.nextPath} (${update.conversationId})`
         );
       }
     }
-    // 2. 父文件夹移动：当 oldPath 是文件且其父目录也发生改名时（即 `a/x.md` → `b/x.md`），
-    //    applyFolderMove 会处理前缀重映射；这里只在 oldFolder 存在且与 newFolder 不同时调用。
-    if (oldFolder !== "" && oldFolder !== newFolder) {
-      await renamer.applyFolderMove(
-        oldFolder,
-        newFolder,
-        new Date().toISOString()
-      );
+    for (const tabId of this.pendingAnchors.keys()) {
+      const next = renamer.getPending(tabId);
+      if (next === undefined) this.pendingAnchors.delete(tabId);
+      else this.pendingAnchors.set(tabId, next);
     }
-    // 3. 已打开会话：精确改名同步。
-    const openConversations = Object.values(
-      this.tabsStore.getSnapshot().tabs
-    ).map((tab) => tab.conversation);
-    await renamer.applyExactRenameToOpen(openConversations, oldPath, newPath);
-    if (oldFolder !== "" && oldFolder !== newFolder) {
-      await renamer.applyFolderMoveToOpen(openConversations, oldFolder, newFolder);
-    }
-    // 4. 通知 chip 订阅者（pending 锚点路径可能已变）。
     this.notifyAnchorChipListeners();
   }
 
@@ -1273,6 +1270,14 @@ export default class TreeTalkPlugin extends Plugin {
           ? activeFilePath
           : undefined;
     const anchorFilePath = pendingAnchor ?? fallbackAnchor;
+    const anchor = verifiedFirstMessageAnchor({
+      filePath: anchorFilePath,
+      vaultId: this.currentVaultId,
+      fileCtime:
+        anchorFilePath === undefined
+          ? undefined
+          : await this.readCtimeForAnchor(anchorFilePath)
+    });
     const userMessageId = crypto.randomUUID();
     const childInput = {
       text,
@@ -1280,8 +1285,8 @@ export default class TreeTalkPlugin extends Plugin {
       messageId: userMessageId,
       now
     } as Parameters<typeof submitChildDraft>[1];
-    if (anchorFilePath !== undefined) {
-      childInput.anchorFilePath = anchorFilePath;
+    if (anchor !== undefined) {
+      Object.assign(childInput, anchor);
     }
     const continueInput = {
       nodeId: before.currentNodeId,
@@ -1289,8 +1294,8 @@ export default class TreeTalkPlugin extends Plugin {
       messageId: userMessageId,
       now
     } as Parameters<typeof continueNode>[1];
-    if (anchorFilePath !== undefined) {
-      continueInput.anchorFilePath = anchorFilePath;
+    if (anchor !== undefined) {
+      Object.assign(continueInput, anchor);
     }
     const command =
       current.draft.mode === "child"
@@ -1298,6 +1303,7 @@ export default class TreeTalkPlugin extends Plugin {
         : continueNode(before, continueInput);
     // 锚点已随本次 tree command 落库（或对话已有消息、锚点不再可写），清理 pending。
     this.pendingAnchors.delete(tab.id);
+    this.anchorRenamer?.clearPending(tab.id);
     this.notifyAnchorChipListeners();
     this.tabsStore.updateConversation(tab.id, () => command.state);
     let requestState = command.state;

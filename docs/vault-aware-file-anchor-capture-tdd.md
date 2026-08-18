@@ -117,7 +117,15 @@
 - 命令：`npx tsc --noEmit`
 - 观察：无输出，类型检查通过。
 
-### 全量 check（含 regression 与 lint）
-- 命令：`npm run check`
-- 观察：完整链路（vitest + tsc + eslint + build + regression）通过。
+### 审查修正：rename 路由与首条消息 verified 三元组 — RED
+- 命令：`npx vitest run tests/domain/anchor-rename-workflow.test.ts`
+- 观察：新增的 frozen store conversation 场景失败，`Object.assign` 尝试写入冻结状态；同时审查发现 `main.ts` 将文件跨目录移动错误扩展为父目录 remap，且首条消息只传递 `anchorFilePath`，会生成 legacy 锚点。
+
+### 审查修正：rename 路由与首条消息 verified 三元组 — GREEN
+- 命令：`npx vitest run tests/domain/anchor-rename-workflow.test.ts tests/domain/verified-first-message-anchor.test.ts && npm run typecheck`
+- 观察：2 个测试文件、5 个测试全部通过；`tsc --noEmit` 通过。文件与文件夹 rename 分流；工作流复制冻结 store state 后返回已更新会话供 store 持久化；首条消息只会写入完整 Vault/path/ctime 三元组，元数据不可用时零锚点写入。
+
+### 审查修正：最终质量门 — GREEN
+- 命令：`openspec validate vault-aware-file-anchor-capture --strict && npm run check`
+- 观察：OpenSpec strict 验证通过；Vitest 106 个文件、621 个测试通过；类型检查、ESLint、生产构建与 Node regression（328 个测试）全部通过。
 
