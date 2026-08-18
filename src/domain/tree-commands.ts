@@ -11,6 +11,7 @@ import type {
   SelectionContext
 } from "./types";
 import { isMessageSelectionContext } from "./types";
+import { isVaultRelativeMarkdownPath } from "./anchor-path";
 
 export interface ContinueNodeInput {
   nodeId: string;
@@ -136,7 +137,7 @@ function nextRevision(conversation: ConversationFile, now: string): void {
 }
 
 export function isMarkdownPath(path: string): boolean {
-  return /\.md$/iu.test(path);
+  return isVaultRelativeMarkdownPath(path);
 }
 
 export function hasUserMessage(conversation: ConversationFile): boolean {

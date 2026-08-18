@@ -1,3 +1,5 @@
+import { isVaultRelativeMarkdownPath } from "./anchor-path";
+
 /**
  * 锚点状态判定与路径重映射（纯领域，不依赖 obsidian）。
  *
@@ -87,6 +89,9 @@ export function classifyAnchor(options: {
     isUuid(anchorVaultId) &&
     isPositiveInteger(anchorFileCtime)
   ) {
+    if (!isVaultRelativeMarkdownPath(anchorFilePath)) {
+      return { kind: "missing" };
+    }
     if (anchorVaultId !== currentVaultId) {
       return { kind: "foreign-vault" };
     }
@@ -132,7 +137,7 @@ function resolveVerifiedAnchor(args: {
     };
   }
   const currentPath = args.resolveCurrentPath?.(anchorFilePath);
-  if (currentPath !== undefined) {
+  if (currentPath !== undefined && isVaultRelativeMarkdownPath(currentPath)) {
     const ctime = args.resolveCtime?.(currentPath);
     if (ctime === anchorFileCtime) {
       return {
@@ -144,7 +149,9 @@ function resolveVerifiedAnchor(args: {
     }
     // 当前路径 ctime 不匹配：fall through 到 ctime 候选扫描。
   }
-  const candidates = args.findCandidatesByCtime?.(anchorFileCtime) ?? [];
+  const candidates = (args.findCandidatesByCtime?.(anchorFileCtime) ?? []).filter(
+    isVaultRelativeMarkdownPath
+  );
   if (candidates.length === 1) {
     const only = candidates[0];
     if (only !== undefined) {

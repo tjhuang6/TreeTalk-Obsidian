@@ -132,6 +132,39 @@ describe("KnowledgeCaptureService anchor preflight", () => {
     }
   );
 
+  it("rejects a non-Markdown verified resolver result with zero writes for both answer and tree", async () => {
+    for (const scope of ["answer", "tree"] as const) {
+      const vault = new FakeVault();
+      const conversation = structuredClone(withAnchorTriple()) as ConversationFile;
+      const service = new KnowledgeCaptureService(vault, "TreeTalk 知识", "TreeTalk", {
+        anchorStatusResolver: () => ({
+          kind: "verified",
+          vaultId: VAULT_ID,
+          filePath: "attachments/scan.pdf",
+          fileCtime: CTIME
+        })
+      });
+      const request =
+        scope === "answer"
+          ? (() => {
+              const node = conversation.nodes[conversation.currentNodeId];
+              if (node === undefined) throw new Error("Missing current node");
+              node.messages.push({
+                id: "answer",
+                role: "assistant",
+                content: "answer",
+                status: "complete",
+                createdAt: NOW,
+                updatedAt: NOW
+              });
+              return { scope, conversation, nodeId: node.id, messageId: "answer" };
+            })()
+          : { scope, conversation };
+      await expect(service.capture(request, NOW)).rejects.toBeInstanceOf(AnchorCaptureError);
+      expect(vault.paths()).toEqual([]);
+    }
+  });
+
   it("rejects capture with zero writes when anchor is foreign", async () => {
     const vault = new FakeVault();
     const conversation = withAnchorTriple();

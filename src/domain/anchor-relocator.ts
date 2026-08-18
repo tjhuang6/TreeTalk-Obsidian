@@ -1,5 +1,6 @@
 import { parseConversation } from "./schema";
 import type { ConversationFile } from "./types";
+import { isVaultRelativeMarkdownPath } from "./anchor-path";
 
 export interface AnchorRelocatorPort {
   resolveCurrentPath: (filePath: string) => string | undefined | Promise<string | undefined>;
@@ -57,6 +58,7 @@ export async function relocateVerifiedAnchor(
   const { anchorVaultId, anchorFilePath, anchorFileCtime } = conversation;
   if (
     anchorFilePath === undefined ||
+    !isVaultRelativeMarkdownPath(anchorFilePath) ||
     !isUuid(anchorVaultId) ||
     !isPositiveInteger(anchorFileCtime)
   ) {
@@ -64,7 +66,7 @@ export async function relocateVerifiedAnchor(
   }
 
   const currentPath = await port.resolveCurrentPath(anchorFilePath);
-  if (currentPath !== undefined) {
+  if (currentPath !== undefined && isVaultRelativeMarkdownPath(currentPath)) {
     const ctime = await port.getCtime(currentPath);
     if (ctime === anchorFileCtime) {
       return { kind: "unchanged", conversation };
@@ -72,7 +74,9 @@ export async function relocateVerifiedAnchor(
     // 路径存在但 ctime 不匹配：可能是外部工具在原地重建，需要 ctime 扫描重定位。
   }
 
-  const candidates = await port.findCandidatesByCtime(anchorFileCtime);
+  const candidates = (await port.findCandidatesByCtime(anchorFileCtime)).filter(
+    isVaultRelativeMarkdownPath
+  );
   if (candidates.length === 1) {
     const resolved = candidates[0];
     if (resolved === undefined || resolved === anchorFilePath) {

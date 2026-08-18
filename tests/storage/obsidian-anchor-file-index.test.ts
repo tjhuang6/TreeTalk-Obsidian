@@ -42,4 +42,15 @@ describe("ObsidianAnchorFileIndex", () => {
     const index = new ObsidianAnchorFileIndex(vault as never);
     expect(index.findCandidatesByCtime(9999)).toEqual([]);
   });
+
+  it("rejects a non-Markdown TFile from exact path and ctime lookup", () => {
+    const vault = {
+      getAbstractFileByPath: vi.fn(() => file("attachments/scan.pdf", 1700)),
+      getMarkdownFiles: vi.fn(() => [file("attachments/scan.pdf", 1700)])
+    };
+    const index = new ObsidianAnchorFileIndex(vault as never);
+    expect(index.resolveCurrentPath("attachments/scan.pdf")).toBeUndefined();
+    expect(index.getCtime("attachments/scan.pdf")).toBeUndefined();
+    expect(index.findCandidatesByCtime(1700)).toEqual([]);
+  });
 });

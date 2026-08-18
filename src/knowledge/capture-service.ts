@@ -17,6 +17,7 @@ import {
 } from "../domain/types";
 import type { VaultPort } from "../storage/conversation-repository";
 import type { AnchorStatus } from "../domain/anchor-status";
+import { isVaultRelativeMarkdownPath } from "../domain/anchor-path";
 import {
   insertMarkdownLinks,
   markdownWikiLink,
@@ -653,6 +654,12 @@ export class KnowledgeCaptureService {
       return { resolvedPath: undefined };
     }
     if (status.kind === "verified") {
+      if (!isVaultRelativeMarkdownPath(status.filePath)) {
+        throw new AnchorCaptureError(
+          "anchor-missing",
+          "锚定文件路径不是当前 Vault 内的 Markdown 文件，已阻止本次沉淀"
+        );
+      }
       return { resolvedPath: status.filePath };
     }
     if (status.kind === "foreign-vault") {

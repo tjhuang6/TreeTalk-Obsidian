@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseConversation } from "../../src/domain/schema";
+import { classifyAnchor } from "../../src/domain/anchor-status";
 import type { ConversationFile } from "../../src/domain/types";
 import { validConversation } from "../fixtures";
 
@@ -34,6 +35,23 @@ describe("schema vault anchor fields", () => {
     expect(parsed.anchorFilePath).toBe("Legacy/note.md");
     expect(parsed.anchorVaultId).toBeUndefined();
     expect(parsed.anchorFileCtime).toBeUndefined();
+  });
+
+  it("reads a complete PDF triple as schema-compatible but never classifies it verified", () => {
+    const conversation = baseConversation();
+    const parsed = parseConversation({
+      ...conversation,
+      anchorVaultId: "11111111-2222-3333-4444-555555555555",
+      anchorFilePath: "attachments/scan.pdf",
+      anchorFileCtime: 1700000000000
+    });
+    expect(parsed.anchorFilePath).toBe("attachments/scan.pdf");
+    expect(
+      classifyAnchor({
+        conversation: parsed,
+        currentVaultId: "11111111-2222-3333-4444-555555555555"
+      })
+    ).toEqual({ kind: "missing" });
   });
 
   it("rejects a verified anchor whose vaultId is not a UUID string", () => {

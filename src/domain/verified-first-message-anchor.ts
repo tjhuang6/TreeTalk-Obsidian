@@ -1,4 +1,4 @@
-import { isMarkdownPath } from "./tree-commands";
+import { isVaultRelativeMarkdownPath } from "./anchor-path";
 
 export interface VerifiedFirstMessageAnchorInput {
   filePath: string | undefined;
@@ -28,7 +28,7 @@ export function verifiedFirstMessageAnchor(
   input: VerifiedFirstMessageAnchorInput
 ): VerifiedFirstMessageAnchor | undefined {
   if (
-    !isMarkdownPath(input.filePath ?? "") ||
+    !isVaultRelativeMarkdownPath(input.filePath) ||
     !isUuid(input.vaultId) ||
     typeof input.fileCtime !== "number" ||
     !Number.isFinite(input.fileCtime) ||

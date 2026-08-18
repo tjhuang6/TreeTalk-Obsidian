@@ -55,6 +55,30 @@ describe("classifyAnchor", () => {
     ).toEqual<AnchorStatus>({ kind: "legacy-unverified" });
   });
 
+  it("keeps a legacy path-only PDF readable but legacy-unverified", () => {
+    expect(
+      classifyAnchor({
+        conversation: { anchorFilePath: "Legacy/scan.pdf" },
+        currentVaultId: VAULT_ID
+      })
+    ).toEqual<AnchorStatus>({ kind: "legacy-unverified" });
+  });
+
+  it.each(["attachments/scan.pdf", "/Notes/a.md", "../Notes/a.md"])(
+    "never verifies an invalid stored triple path: %s",
+    (anchorFilePath) => {
+      expect(
+        classifyAnchor({
+          conversation: { anchorVaultId: VAULT_ID, anchorFilePath, anchorFileCtime: CTIME },
+          currentVaultId: VAULT_ID,
+          resolveCurrentPath: () => anchorFilePath,
+          resolveCtime: () => CTIME,
+          findCandidatesByCtime: () => [anchorFilePath]
+        })
+      ).toEqual<AnchorStatus>({ kind: "missing" });
+    }
+  );
+
   it("treats partial triple (vaultId + path, missing ctime) as missing", () => {
     expect(
       classifyAnchor({

@@ -118,6 +118,23 @@ describe("relocateVerifiedAnchor", () => {
     expect(result.conversation.anchorFilePath).toBe("Legacy/n.md");
   });
 
+  it("skips a complete triple whose stored path is not Vault-relative Markdown", async () => {
+    const conversation = makeConversation({
+      anchorVaultId: VAULT_ID,
+      anchorFilePath: "attachments/scan.pdf",
+      anchorFileCtime: CTIME
+    });
+    const port: AnchorRelocatorPort = {
+      resolveCurrentPath: async () => "attachments/scan.pdf",
+      getCtime: async () => CTIME,
+      findCandidatesByCtime: async () => ["Notes/recovered.md"]
+    };
+    await expect(relocateVerifiedAnchor(conversation, port)).resolves.toMatchObject({
+      kind: "skipped",
+      conversation
+    });
+  });
+
   it("updates path when current path resolves but ctime mismatches and a unique candidate exists", async () => {
     const conversation = makeConversation({
       anchorVaultId: VAULT_ID,

@@ -34,4 +34,13 @@ describe("verifiedFirstMessageAnchor", () => {
       })
     ).toBeUndefined();
   });
+
+  it.each(["attachments/scan.pdf", "/Notes/design.md", "../Notes/design.md"])(
+    "rejects a non-Vault-relative Markdown anchor path: %s",
+    (filePath) => {
+      expect(
+        verifiedFirstMessageAnchor({ filePath, vaultId: VAULT_ID, fileCtime: 1700000000000 })
+      ).toBeUndefined();
+    }
+  );
 });
