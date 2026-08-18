@@ -6,7 +6,6 @@ import {
 } from "obsidian";
 import {
   DEFAULT_SETTINGS,
-  normalizeConfiguredModel,
   type RelatedNoteDepth,
   type TreeTalkSettings
 } from "./tabs/plugin-data";
@@ -15,17 +14,28 @@ import {
   PROVIDER_PRESETS,
   validateBaseUrl
 } from "./providers/presets";
-import type {
-  ProviderProfileConfig,
-  ProviderProfilesState
+import {
+  addProviderProfile,
+  deleteProviderProfile,
+  profileSecretId,
+  renameProviderProfile,
+  resolveActiveProfile,
+  switchActiveProfile,
+  switchProfileProvider,
+  type ProviderProfileConfig,
+  type ProviderProfilesState
 } from "./providers/provider-profiles";
 import { Notice } from "obsidian";
 
 function settingsProfile(settings: TreeTalkSettings): ProviderProfileConfig {
-  const state = settings.providerProfiles;
-  return state?.profiles.find((profile) => profile.id === state.activeProfileId) ?? state?.profiles[0] ?? {
-    id: "legacy-fallback", label: "默认", provider: settings.provider, model: settings.model, baseUrl: settings.baseUrl
+  const legacy: ProviderProfileConfig = {
+    id: "legacy-fallback",
+    label: "默认",
+    provider: settings.provider,
+    model: settings.model,
+    baseUrl: settings.baseUrl
   };
+  return resolveActiveProfile(settings.providerProfiles, legacy);
 }
 
 function profileState(settings: TreeTalkSettings): ProviderProfilesState {
@@ -46,6 +56,7 @@ export interface TreeTalkSettingsPort {
   updateSettings(next: TreeTalkSettings): Promise<void>;
   getApiKey(): string;
   setApiKey(value: string): void;
+  clearProfileSecret(profileId: string): void;
   subscribeWebSearch(listener: () => void): () => void;
   subscribeComposerControls(listener: () => void): () => void;
 }
@@ -129,13 +140,40 @@ export class TreeTalkSettingTab extends PluginSettingTab {
             }
           },
           {
+            name: "配置档名称",
+            desc: "编辑只影响当前活动配置档的显示名称；空值会自动归一为「未命名配置档」。",
+            render: (setting) => {
+              setting.addText((text) => {
+                const profile = settingsProfile(this.plugin.getSettings());
+                text
+                  .setValue(profile.label)
+                  .setPlaceholder("未命名配置档")
+                  .onChange(async (value) => {
+                    const settings = this.plugin.getSettings();
+                    const state = profileState(settings);
+                    const next = renameProviderProfile(state, settingsProfile(settings).id, value);
+                    if (next === state) return;
+                    await this.plugin.updateSettings({ ...settings, providerProfiles: next });
+                    this.update();
+                  });
+              });
+            }
+          },
+          {
             name: "新增配置档",
             render: (setting) => {
-              setting.addButton((button) => button.setButtonText("新增").onClick(() => {
+              setting.addButton((button) => button.setButtonText("新增").onClick(async () => {
                 const settings = this.plugin.getSettings();
                 const state = profileState(settings);
-                const profile: ProviderProfileConfig = { id: crypto.randomUUID(), label: "新配置档", provider: settings.provider, model: settings.model, baseUrl: settings.baseUrl };
-                void this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: profile.id, profiles: [...state.profiles, profile] } });
+                const seed = settingsProfile(settings);
+                const next = addProviderProfile(state, {
+                  id: crypto.randomUUID(),
+                  provider: seed.provider,
+                  model: seed.model,
+                  baseUrl: seed.baseUrl
+                });
+                await this.plugin.updateSettings({ ...settings, providerProfiles: next });
+                this.update();
               }));
             }
           },
@@ -143,14 +181,23 @@ export class TreeTalkSettingTab extends PluginSettingTab {
             name: "删除当前配置档",
             desc: "至少保留一个配置档。",
             render: (setting) => {
-              setting.addButton((button) => button.setButtonText("删除").onClick(() => {
+              setting.addButton((button) => button.setButtonText("删除").onClick(async () => {
                 const settings = this.plugin.getSettings();
                 const state = profileState(settings);
                 if (state.profiles.length <= 1) { new Notice("至少保留一个配置档"); return; }
                 const current = settingsProfile(settings);
-                this.plugin.setApiKey("");
-                const profiles = state.profiles.filter((profile) => profile.id !== current.id);
-                void this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: profiles[0]?.id ?? null, profiles } });
+                const { state: nextState, removedSecretId } = deleteProviderProfile(state, current.id);
+                if (nextState === state) return;
+                if (removedSecretId !== null) {
+                  try {
+                    this.plugin.clearProfileSecret(current.id);
+                  } catch {
+                    // Settings tab is intentionally permissive: a stale secret is
+                    // safe — main.ts only reads the active profile's secret.
+                  }
+                }
+                await this.plugin.updateSettings({ ...settings, providerProfiles: nextState });
+                this.update();
               }));
             }
           },
@@ -167,7 +214,7 @@ export class TreeTalkSettingTab extends PluginSettingTab {
             name: "模型",
             desc: (() => {
               const preset = getProviderPreset(
-                this.plugin.getSettings().provider
+                settingsProfile(this.plugin.getSettings()).provider
               );
               const models = preset?.models ?? [];
               return models.length > 0
@@ -184,7 +231,7 @@ export class TreeTalkSettingTab extends PluginSettingTab {
               key: "baseUrl",
               placeholder: (() => {
                 const preset = getProviderPreset(
-                  this.plugin.getSettings().provider
+                  settingsProfile(this.plugin.getSettings()).provider
                 );
                 return preset?.baseUrl !== undefined &&
                   preset.baseUrl.length > 0
@@ -217,7 +264,7 @@ export class TreeTalkSettingTab extends PluginSettingTab {
               key: "webSearchEnabled",
               disabled: () => {
                 const preset = getProviderPreset(
-                  this.plugin.getSettings().provider
+                  settingsProfile(this.plugin.getSettings()).provider
                 );
                 return preset?.supportsWebSearch !== true;
               }
@@ -296,6 +343,7 @@ export class TreeTalkSettingTab extends PluginSettingTab {
 
   getControlValue(key: string): unknown {
     const settings = this.plugin.getSettings();
+    const profile = settingsProfile(settings);
     switch (key) {
       case "contextDivergenceEnabled":
         return settings.contextDivergenceEnabled;
@@ -305,12 +353,14 @@ export class TreeTalkSettingTab extends PluginSettingTab {
         return settings.answerThinkingMode === "enabled";
       case "activeProfileId":
         return profileState(settings).activeProfileId;
+      case "profileLabel":
+        return profile.label;
       case "provider":
-        return settingsProfile(settings).provider;
+        return profile.provider;
       case "model":
-        return settingsProfile(settings).model;
+        return profile.model;
       case "baseUrl":
-        return settingsProfile(settings).baseUrl;
+        return profile.baseUrl;
       case "apiKey":
         return this.plugin.getApiKey();
       case "obsidianMarkdownCompatibility":
@@ -336,6 +386,8 @@ export class TreeTalkSettingTab extends PluginSettingTab {
 
   async setControlValue(key: string, value: unknown): Promise<void> {
     const settings = this.plugin.getSettings();
+    const profile = settingsProfile(settings);
+    const state = profileState(settings);
     switch (key) {
       case "contextDivergenceEnabled":
         await this.plugin.updateSettings({
@@ -356,27 +408,42 @@ export class TreeTalkSettingTab extends PluginSettingTab {
         });
         break;
       case "activeProfileId": {
-        const state = profileState(settings);
-        if (state.profiles.some((profile) => profile.id === String(value))) {
-          await this.plugin.updateSettings({ ...settings, providerProfiles: { ...state, activeProfileId: String(value) } });
-          this.update();
-        }
+        const next = switchActiveProfile(state, String(value));
+        if (next === state) break;
+        await this.plugin.updateSettings({ ...settings, providerProfiles: next });
+        this.update();
+        break;
+      }
+      case "profileLabel": {
+        const next = renameProviderProfile(state, profile.id, String(value));
+        if (next === state) break;
+        await this.plugin.updateSettings({ ...settings, providerProfiles: next });
+        this.update();
         break;
       }
       case "provider": {
         const nextProvider = String(value);
-        const current = settingsProfile(settings);
-        const state = profileState(settings);
-        const profile = { ...current, provider: nextProvider, model: normalizeConfiguredModel(nextProvider, current.model) };
-        await this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: profile.id, profiles: state.profiles.map((item) => item.id === profile.id ? profile : item) }, provider: profile.provider, model: profile.model });
+        const next = switchProfileProvider(state, nextProvider);
+        if (next === state) break;
+        const nextProfile = next.profiles.find((item) => item.id === profile.id) ?? profile;
+        await this.plugin.updateSettings({
+          ...settings,
+          providerProfiles: next,
+          provider: nextProfile.provider,
+          model: nextProfile.model,
+          baseUrl: nextProfile.baseUrl
+        });
         this.update();
         break;
       }
       case "model": {
-        const current = settingsProfile(settings);
-        const state = profileState(settings);
-        const model = normalizeConfiguredModel(current.provider, String(value));
-        await this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: current.id, profiles: state.profiles.map((item) => item.id === current.id ? { ...item, model } : item) }, model });
+        const model = String(value).trim();
+        const profiles = state.profiles.map((item) => item.id === profile.id ? { ...item, model } : item);
+        await this.plugin.updateSettings({
+          ...settings,
+          providerProfiles: { ...state, profiles },
+          model
+        });
         break;
       }
       case "baseUrl": {
@@ -390,11 +457,10 @@ export class TreeTalkSettingTab extends PluginSettingTab {
         if (validation.warning !== undefined) {
           new Notice(validation.warning);
         }
-        const current = settingsProfile(settings);
-        const state = profileState(settings);
+        const profiles = state.profiles.map((item) => item.id === profile.id ? { ...item, baseUrl: nextBaseUrl } : item);
         await this.plugin.updateSettings({
           ...settings,
-          providerProfiles: { activeProfileId: current.id, profiles: state.profiles.map((item) => item.id === current.id ? { ...item, baseUrl: nextBaseUrl } : item) },
+          providerProfiles: { ...state, profiles },
           baseUrl: nextBaseUrl
         });
         break;
@@ -477,3 +543,6 @@ export class TreeTalkSettingTab extends PluginSettingTab {
     this.unsubscribeComposerControls();
   }
 }
+
+/** Re-exported for tests and for callers that need the same secret id shape. */
+export { profileSecretId };

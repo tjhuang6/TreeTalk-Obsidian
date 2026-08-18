@@ -1025,6 +1025,19 @@ export default class TreeTalkPlugin extends Plugin {
     if (apiKey.length > 0) void this.nodeSummaries.repairOpenTabs();
   }
 
+  clearProfileSecret(profileId: string): void {
+    // Settings tab calls this when a profile is deleted. We deliberately
+    // tolerate "no such secret" because SecretStorage in current Obsidian
+    // has no removeSecret() — clearing the value to "" is the documented
+    // way to wipe a slot without leaving an orphan behind.
+    try {
+      this.app.secretStorage.setSecret(profileSecretId(profileId), "");
+    } catch {
+      // Swallow: a stale secret is safe — main.ts only reads the active
+      // profile's secret, and the deleted profile can never be active again.
+    }
+  }
+
   private activeMarkdownSelectionSource():
     | MarkdownSelectionSource
     | undefined {

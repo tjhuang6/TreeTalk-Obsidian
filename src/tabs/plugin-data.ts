@@ -10,7 +10,7 @@ import {
   type TabsWorkspaceData
 } from "./workspace-state";
 import { logWarning } from "../utils/error-log";
-import type { ProviderProfilesState } from "../providers/provider-profiles";
+import { parseProviderProfiles, type ProviderProfilesState } from "../providers/provider-profiles";
 
 export type NoteContextTokenBudget = "minimal" | "full" | number;
 export type CompressedNoteTokenBudget = Exclude<NoteContextTokenBudget, "full">;
@@ -172,20 +172,8 @@ function parseRelatedNoteDepth(
   return positiveInteger(value) ?? fallback;
 }
 
-function parseProviderProfiles(value: unknown): ProviderProfilesState {
-  if (!isRecord(value) || !Array.isArray(value.profiles)) {
-    return { activeProfileId: null, profiles: [] };
-  }
-  const profiles = value.profiles.filter((profile): profile is ProviderProfilesState["profiles"][number] => {
-    if (!isRecord(profile)) return false;
-    return typeof profile.id === "string" && typeof profile.label === "string" &&
-      typeof profile.provider === "string" && typeof profile.model === "string" &&
-      typeof profile.baseUrl === "string";
-  });
-  return {
-    activeProfileId: typeof value.activeProfileId === "string" ? value.activeProfileId : null,
-    profiles
-  };
+function parseStoredProviderProfiles(value: unknown): ProviderProfilesState {
+  return parseProviderProfiles(value);
 }
 
 function parseSettings(value: unknown): TreeTalkSettings {
@@ -216,7 +204,7 @@ function parseSettings(value: unknown): TreeTalkSettings {
           value.noteContextTokenBudget,
           lastCompressedNoteTokenBudget
         );
-  const providerProfiles = parseProviderProfiles(value.providerProfiles);
+  const providerProfiles = parseStoredProviderProfiles(value.providerProfiles);
   return normalizeTreeTalkSettings({
     executionMode:
       value.executionMode === "legacy" || value.executionMode === "pi"

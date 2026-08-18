@@ -4,6 +4,9 @@
 
 - 设置页支持新增、切换、编辑和删除多个供应商配置档；每个配置档的 API Key 使用独立的 Obsidian SecretStorage ID。
 - 旧版 `treetalk-api-key` 与单一 provider/model/baseUrl 会在首次加载时迁移为「默认」配置档；已有配置档时不会覆盖或重复迁移。
+- 新增「配置档名称」编辑框，可即时重命名活动配置档；空值自动归一为「未命名配置档」。
+- 切换供应商时自动用 preset 的 defaultModel 替换模型并清空 API 地址，旧供应商的自定义端点和模型不会再串档。
+- 配置档解析现在会过滤非法 id、重复 id，并把空白名称归一为「未命名配置档」，确保多 SecretStorage key 写入安全。
 
 ## Unreleased: Vault 感知的文件锚点与沉淀路由
 
