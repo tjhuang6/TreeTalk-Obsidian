@@ -51,8 +51,10 @@ function relocatedPort(): AnchorRelocatorPort {
 }
 
 describe("saveStoredAnchorRecord", () => {
-  it("clones a deeply frozen loaded conversation before updating and saves using its old revision", async () => {
-    const loaded = structuredClone(conversation());
+  it("uses the freshly loaded revision and preserves its latest conversation content", async () => {
+    const loaded = structuredClone(
+      conversation({ revision: 10, title: "latest loaded title" })
+    );
     Object.freeze(loaded.nodes);
     Object.freeze(loaded);
     const save = vi.fn(async () => undefined);
@@ -64,17 +66,18 @@ describe("saveStoredAnchorRecord", () => {
     );
 
     expect(loaded.anchorFilePath).toBe("Notes/old.md");
-    expect(loaded.revision).toBe(3);
+    expect(loaded.revision).toBe(10);
     expect(save).toHaveBeenCalledWith(
       record().folder,
       expect.objectContaining({
+        title: "latest loaded title",
         anchorFilePath: "Notes/new.md",
         anchorVaultId: VAULT_ID,
         anchorFileCtime: CTIME,
-        revision: 4,
+        revision: 11,
         updatedAt: NOW
       }),
-      3
+      10
     );
   });
 });

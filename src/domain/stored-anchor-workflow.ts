@@ -37,7 +37,7 @@ export function prepareStoredAnchorSave(
   updated.anchorFilePath = record.anchorFilePath;
   updated.anchorVaultId = record.anchorVaultId;
   updated.anchorFileCtime = record.anchorFileCtime;
-  updated.revision = record.revision;
+  updated.revision = loaded.revision + 1;
   updated.updatedAt = now;
   return parseConversation(updated);
 }

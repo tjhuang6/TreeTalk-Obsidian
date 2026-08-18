@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AnchorRenameWorkflow } from "../../src/domain/anchor-rename-workflow";
 import {
   AnchorRenamer,
@@ -40,7 +40,7 @@ describe("AnchorRenameWorkflow", () => {
       skipOpenConversationIds: new Set()
     });
     const openConversations = [open("Notes/a.md"), open("Notes/other.md")];
-    const workflow = new AnchorRenameWorkflow(renamer);
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
 
     const result = await workflow.apply(
       { kind: "file", oldPath: "Notes/a.md", newPath: "Archive/a.md" },
@@ -67,7 +67,7 @@ describe("AnchorRenameWorkflow", () => {
     });
     renamer.setPending("tab", "Notes/pending.md");
     const openConversations = [open("Notes/open.md")];
-    const workflow = new AnchorRenameWorkflow(renamer);
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
 
     const result = await workflow.apply(
       { kind: "folder", oldPath: "Notes", newPath: "Archive/Notes" },
@@ -87,7 +87,7 @@ describe("AnchorRenameWorkflow", () => {
       skipOpenConversationIds: new Set()
     });
     const conversation = Object.freeze(open("Notes/a.md"));
-    const workflow = new AnchorRenameWorkflow(renamer);
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
 
     const result = await workflow.apply(
       { kind: "file", oldPath: "Notes/a.md", newPath: "Notes/b.md" },
@@ -99,14 +99,37 @@ describe("AnchorRenameWorkflow", () => {
     expect(result.openConversations[0]?.anchorFilePath).toBe("Notes/b.md");
   });
 
-  it("serializes each whole rename workflow so a later stored phase cannot overtake an earlier open phase", async () => {
-    let releaseFirstSave: (() => void) | undefined;
-    let markFirstSaveStarted: (() => void) | undefined;
-    const firstSaveStarted = new Promise<void>((resolve) => {
-      markFirstSaveStarted = resolve;
+  it("does not rewrite a same-path foreign open anchor", async () => {
+    const saveStored = async (): Promise<void> => undefined;
+    const renamer = new AnchorRenamer({
+      loadStored: async () => [],
+      saveStored,
+      skipOpenConversationIds: new Set()
     });
-    const firstSaveGate = new Promise<void>((resolve) => {
-      releaseFirstSave = resolve;
+    const foreign = open("Notes/a.md");
+    foreign.anchorVaultId = "foreign-vault";
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
+
+    const result = await workflow.apply(
+      { kind: "file", oldPath: "Notes/a.md", newPath: "Notes/b.md" },
+      [foreign],
+      NOW
+    );
+
+    expect(foreign.anchorFilePath).toBe("Notes/a.md");
+    expect(foreign.revision).toBe(0);
+    expect(result.openConversations[0]?.anchorFilePath).toBe("Notes/a.md");
+    expect(result.openConversations[0]?.revision).toBe(0);
+  });
+
+  it("does not start a second event until the first stored and open phases finish", async () => {
+    let releaseFirstOpen: (() => void) | undefined;
+    let markFirstOpenStarted: (() => void) | undefined;
+    const firstOpenStarted = new Promise<void>((resolve) => {
+      markFirstOpenStarted = resolve;
+    });
+    const firstOpenGate = new Promise<void>((resolve) => {
+      releaseFirstOpen = resolve;
     });
     const events: string[] = [];
     let saves = 0;
@@ -115,15 +138,21 @@ describe("AnchorRenameWorkflow", () => {
       loadStored: async () => records,
       saveStored: async () => {
         saves += 1;
-        events.push(`save-${String(saves)}`);
-        if (saves === 1) {
-          markFirstSaveStarted?.();
-          await firstSaveGate;
-        }
+        events.push(`stored-${String(saves)}`);
       },
       skipOpenConversationIds: new Set()
     });
-    const workflow = new AnchorRenameWorkflow(renamer);
+    let openPhases = 0;
+    vi.spyOn(renamer, "applyExactRenameToOpen").mockImplementation(async () => {
+      openPhases += 1;
+      events.push(`open-start-${String(openPhases)}`);
+      if (openPhases === 1) {
+        markFirstOpenStarted?.();
+        await firstOpenGate;
+      }
+      events.push(`open-finish-${String(openPhases)}`);
+    });
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
     const openConversations = [open("Notes/a.md")];
 
     const first = workflow.apply(
@@ -131,7 +160,7 @@ describe("AnchorRenameWorkflow", () => {
       openConversations,
       NOW
     );
-    await firstSaveStarted;
+    await firstOpenStarted;
     const second = workflow.apply(
       { kind: "file", oldPath: "Notes/b.md", newPath: "Notes/c.md" },
       openConversations,
@@ -139,11 +168,16 @@ describe("AnchorRenameWorkflow", () => {
     );
     await Promise.resolve();
 
-    expect(events).toEqual(["save-1"]);
-    releaseFirstSave?.();
-    const [firstResult, secondResult] = await Promise.all([first, second]);
-    expect(firstResult.openConversations[0]?.anchorFilePath).toBe("Notes/b.md");
-    expect(secondResult.openConversations[0]?.anchorFilePath).toBe("Notes/a.md");
-    expect(events).toEqual(["save-1", "save-2"]);
+    expect(events).toEqual(["stored-1", "open-start-1"]);
+    releaseFirstOpen?.();
+    await Promise.all([first, second]);
+    expect(events).toEqual([
+      "stored-1",
+      "open-start-1",
+      "open-finish-1",
+      "stored-2",
+      "open-start-2",
+      "open-finish-2"
+    ]);
   });
 });

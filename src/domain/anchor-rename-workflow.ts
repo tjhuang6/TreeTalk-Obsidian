@@ -20,7 +20,10 @@ export interface AnchorRenameWorkflowResult {
 export class AnchorRenameWorkflow {
   private queue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly renamer: AnchorRenamer) {}
+  constructor(
+    private readonly renamer: AnchorRenamer,
+    private readonly currentVaultId: string | undefined
+  ) {}
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.queue.then(operation, operation);
@@ -37,6 +40,7 @@ export class AnchorRenameWorkflow {
     now: string
   ): Promise<AnchorRenameWorkflowResult> {
     return this.enqueue(async () => {
+      const currentVaultId = this.currentVaultId ?? "";
       const updatedOpenConversations = openConversations.map(
         (conversation) => structuredClone(conversation) as ConversationFile
       );
@@ -44,12 +48,14 @@ export class AnchorRenameWorkflow {
         const stored = await this.renamer.applyExactRename(
           rename.oldPath,
           rename.newPath,
-          now
+          now,
+          currentVaultId
         );
         await this.renamer.applyExactRenameToOpen(
           updatedOpenConversations,
           rename.oldPath,
-          rename.newPath
+          rename.newPath,
+          currentVaultId
         );
         return { stored, openConversations: updatedOpenConversations };
       }
@@ -57,12 +63,14 @@ export class AnchorRenameWorkflow {
       const stored = await this.renamer.applyFolderMove(
         rename.oldPath,
         rename.newPath,
-        now
+        now,
+        currentVaultId
       );
       await this.renamer.applyFolderMoveToOpen(
         updatedOpenConversations,
         rename.oldPath,
-        rename.newPath
+        rename.newPath,
+        currentVaultId
       );
       return { stored, openConversations: updatedOpenConversations };
     });

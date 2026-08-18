@@ -57,6 +57,28 @@ describe("AnchorRenamer.applyExactRename", () => {
     expect(stored[0]?.anchorFilePath).toBe("Notes/a.md");
   });
 
+  it("does not save a same-path foreign stored anchor", async () => {
+    const foreign = { ...makeStored(), anchorVaultId: "foreign-vault" };
+    const saveStored = vi.fn(async () => undefined);
+    const renamer = new AnchorRenamer({
+      loadStored: async () => [foreign],
+      saveStored,
+      skipOpenConversationIds: new Set()
+    });
+
+    const result = await renamer.applyExactRename(
+      "Notes/a.md",
+      "Notes/b.md",
+      NOW,
+      VAULT_ID
+    );
+
+    expect(result).toBeNull();
+    expect(foreign.anchorFilePath).toBe("Notes/a.md");
+    expect(foreign.revision).toBe(1);
+    expect(saveStored).not.toHaveBeenCalled();
+  });
+
   it("skips open conversation IDs and does not save them", async () => {
     const stored = [makeStored()];
     const saveStored = vi.fn(async () => undefined);

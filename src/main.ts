@@ -410,7 +410,10 @@ export default class TreeTalkPlugin extends Plugin {
       this.currentVaultId = undefined;
     }
     this.anchorRenamer = new AnchorRenamer(this.buildAnchorRenamerStore());
-    this.anchorRenameWorkflow = new AnchorRenameWorkflow(this.anchorRenamer);
+    this.anchorRenameWorkflow = new AnchorRenameWorkflow(
+      this.anchorRenamer,
+      this.currentVaultId
+    );
     const reconciliation = await this.lifecycleQueue.run(() =>
       this.lifecycleReconciler?.reconcile() ??
       Promise.resolve({ repaired: 0, failed: 0 })

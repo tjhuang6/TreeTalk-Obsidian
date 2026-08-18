@@ -128,3 +128,19 @@
 ### 审查修正：最终质量门 — GREEN
 - 命令：`openspec validate vault-aware-file-anchor-capture --strict && npm run check`
 - 观察：OpenSpec strict 验证通过；Vitest 106 个文件、621 个测试通过；类型检查、ESLint、生产构建与 Node regression（328 个测试）全部通过。
+
+### 审查修正：Vault-aware rename 与最新 revision — RED
+- 命令：`npx vitest run tests/domain/anchor-renamer.test.ts`
+- 观察：新增同路径 foreign stored anchor 场景失败（Tests 1 failed | 13 passed）；旧实现仍返回更新并准备保存。符合 RED。
+- 命令：`npx vitest run tests/domain/anchor-renamer.test.ts tests/domain/anchor-rename-workflow.test.ts tests/domain/stored-anchor-workflow.test.ts`
+- 观察：新增 loaded revision=10、enumerated record revision=4 的保存场景失败（Tests 1 failed | 28 passed）；候选错误地使用 revision=4 而非 11。符合 RED。
+
+### 审查修正：Vault-aware rename 与最新 revision — GREEN
+- 命令：`npx vitest run tests/domain/anchor-renamer.test.ts tests/domain/anchor-rename-workflow.test.ts tests/domain/stored-anchor-workflow.test.ts`
+- 观察：Test Files 3 passed (3)，Tests 29 passed (29)。`AnchorRenameWorkflow` 在插件字段中仅初始化一次，并用单个队列验证第二事件直到第一事件 stored 与 open 阶段均结束才开始；workflow 接收 currentVaultId，foreign/legacy/partial 锚点不参与 stored/open 路径改写，pending anchor 仍随事件更新；持久化保存从真实 loaded conversation 生成 candidate，保留最新内容并以 `loaded.revision + 1` 保存（expected revision=loaded.revision）。
+
+### 审查修正：最终门禁 — GREEN
+- 命令：`openspec validate vault-aware-file-anchor-capture --strict`
+- 观察：`Change 'vault-aware-file-anchor-capture' is valid`。
+- 命令：`npm run check`
+- 观察：Vitest 107 个文件、635 个测试通过；`tsc --noEmit`、ESLint、生产构建通过；Node regression 328 个测试通过。

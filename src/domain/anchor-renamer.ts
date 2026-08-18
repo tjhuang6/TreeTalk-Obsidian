@@ -64,6 +64,22 @@ function rewritePath(
   return undefined;
 }
 
+function isVerifiedInCurrentVault(
+  anchor: {
+    anchorVaultId?: string;
+    anchorFilePath?: string;
+    anchorFileCtime?: number;
+  },
+  currentVaultId: string | undefined
+): boolean {
+  return (
+    currentVaultId !== undefined &&
+    anchor.anchorVaultId === currentVaultId &&
+    typeof anchor.anchorFilePath === "string" &&
+    typeof anchor.anchorFileCtime === "number"
+  );
+}
+
 /**
  * Vault rename 事件的串行处理器：
  *
@@ -107,13 +123,15 @@ export class AnchorRenamer {
   applyExactRename(
     oldPath: string,
     newPath: string,
-    now: string
+    now: string,
+    currentVaultId?: string
   ): Promise<RenameResult | null> {
     return this.enqueue(async () => {
       const stored = await this.store.loadStored();
       const updates: AnchorUpdate[] = [];
       let anySkipped = false;
       for (const record of stored) {
+        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(record, currentVaultId)) continue;
         if (this.store.skipOpenConversationIds.has(record.conversationId)) {
           anySkipped = true;
           continue;
@@ -159,13 +177,15 @@ export class AnchorRenamer {
   applyFolderMove(
     oldPrefix: string,
     newPrefix: string,
-    now: string
+    now: string,
+    currentVaultId?: string
   ): Promise<RenameResult | null> {
     return this.enqueue(async () => {
       const stored = await this.store.loadStored();
       const updates: AnchorUpdate[] = [];
       let anySkipped = false;
       for (const record of stored) {
+        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(record, currentVaultId)) continue;
         if (this.store.skipOpenConversationIds.has(record.conversationId)) {
           anySkipped = true;
           continue;
@@ -214,10 +234,12 @@ export class AnchorRenamer {
   applyExactRenameToOpen(
     openConversations: ConversationFile[],
     oldPath: string,
-    newPath: string
+    newPath: string,
+    currentVaultId?: string
   ): Promise<void> {
     return this.enqueue(async () => {
       for (const conversation of openConversations) {
+        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(conversation, currentVaultId)) continue;
         const next = rewritePath(conversation.anchorFilePath ?? "", {
           from: oldPath,
           to: newPath
@@ -237,10 +259,12 @@ export class AnchorRenamer {
   applyFolderMoveToOpen(
     openConversations: ConversationFile[],
     oldPrefix: string,
-    newPrefix: string
+    newPrefix: string,
+    currentVaultId?: string
   ): Promise<void> {
     return this.enqueue(async () => {
       for (const conversation of openConversations) {
+        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(conversation, currentVaultId)) continue;
         const next = rewritePath(conversation.anchorFilePath ?? "", {
           oldPrefix,
           newPrefix
