@@ -116,7 +116,11 @@ export class TreeTalkSettingTab extends PluginSettingTab {
           },
           {
             name: "流式输出",
-            desc: "开启后回答会边生成边显示；关闭后等待完整回答后一次性显示。",
+            desc:
+              "开启后回答会边生成边显示；关闭后等待完整回答后一次性显示。" +
+              "注：MiniMax 官方 Anthropic 端点（api.minimaxi.com/anthropic）" +
+              "因 Obsidian CORS 限制会自动改用非流式 buffered 模式回答；" +
+              "切回 DeepSeek 等其他供应商时仍按本开关生效。",
             control: { type: "toggle", key: "streamingOutputEnabled" }
           },
           {

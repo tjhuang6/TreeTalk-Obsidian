@@ -71,6 +71,7 @@ import { ActiveResponseRequests } from "./providers/active-response-requests";
 import type { ActiveResponseHandle } from "./providers/active-response-requests";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { resolveProfile } from "./providers/presets";
+import { effectiveStreamingOutputEnabled } from "./providers/provider-network-policy";
 import {
   migrateLegacyProviderProfile,
   profileSecretId,
@@ -1588,7 +1589,10 @@ export default class TreeTalkPlugin extends Plugin {
         modelId: activeProfile.model
       },
       webSearchEnabled,
-      streamingOutputEnabled: this.pluginSettings.streamingOutputEnabled,
+      streamingOutputEnabled: resolveExecutionRequestStreaming(
+        this.pluginSettings.streamingOutputEnabled,
+        profile
+      ),
       currentQuestion: text,
       answerThinkingMode: requestedAnswerThinkingMode,
       selectionCount: selectedQuotes.length,
@@ -2217,4 +2221,20 @@ export default class TreeTalkPlugin extends Plugin {
       .then(() => this.saveData(this.pluginData));
     return this.dataSaveTail;
   }
+}
+
+/**
+ * Resolve the streaming flag for one execution request. The official MiniMax
+ * Anthropic endpoint (api.minimaxi.com/anthropic) does not return the
+ * `x-api-key` / `anthropic-version` headers in its CORS preflight, so the
+ * browser-side streaming fetch is rejected before the response is read; the
+ * Obsidian `requestUrl` (buffered) transport is the only path that survives.
+ * The helper is exported so the wiring can be unit-tested without spinning
+ * up the full plugin class.
+ */
+export function resolveExecutionRequestStreaming(
+  configured: boolean,
+  profile: ProviderProfile
+): boolean {
+  return effectiveStreamingOutputEnabled(configured, profile);
 }
