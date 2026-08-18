@@ -128,4 +128,3 @@
 ### 审查修正：最终质量门 — GREEN
 - 命令：`openspec validate vault-aware-file-anchor-capture --strict && npm run check`
 - 观察：OpenSpec strict 验证通过；Vitest 106 个文件、621 个测试通过；类型检查、ESLint、生产构建与 Node regression（328 个测试）全部通过。
-
