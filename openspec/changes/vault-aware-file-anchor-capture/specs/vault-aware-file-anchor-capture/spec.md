@@ -33,7 +33,7 @@
 - **THEN** schema 仍可读取该会话，但锚点状态为 `legacy-unverified`
 
 ### Requirement: 锚点跟随原 Vault 内文件重命名和移动
-系统 SHALL 在当前 Vault 内维护锚点文件的最新路径。正文修改 MUST NOT 改变锚点；rename 事件 SHALL 更新匹配文件或文件夹下的 pending、活动和历史会话路径。
+系统 SHALL 在当前 Vault 内维护已验证 Markdown 锚点文件的最新路径。正文修改 MUST NOT 改变锚点；rename 事件 SHALL 仅更新 stored/open 中完整三元组、Vault ID 等于当前 Vault 且当前路径（stored 同时包括 observed 路径）为 Vault-relative Markdown 的会话路径。显式 Markdown 选择产生的 pending 路径 SHALL 保持其独立重映射语义。
 
 #### Scenario: 修改锚点文件正文
 - **WHEN** 用户修改锚点 Markdown 的内容但没有删除或替换文件
@@ -54,6 +54,10 @@
 #### Scenario: ctime 候选不唯一
 - **WHEN** 当前 Vault 中存在多个具有相同锚点 ctime 的 Markdown 候选
 - **THEN** 系统 MUST NOT 猜测目标文件，并将状态标记为 ambiguous
+
+#### Scenario: 非 Markdown 路径经 rename 事件
+- **WHEN** 完整三元组的 stored 或 open 路径为 `attachments/scan.pdf`，Vault 把它重命名为 `attachments/scan.md` 或移动其父文件夹
+- **THEN** 系统 MUST NOT 保存、更新路径、递增 revision 或将其升级为 verified
 
 ### Requirement: 沉淀前阻止错误 Vault 写入
 系统 MUST 在创建任何沉淀文件或目录前验证锚点状态。外来、未验证、缺失或歧义锚点 MUST NOT 回退到当前 Vault 的 `treeCaptureFolder` 或相同相对路径。

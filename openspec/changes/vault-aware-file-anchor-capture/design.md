@@ -83,7 +83,7 @@ type AnchorStatus =
 
 ### D7：重命名更新使用串行队列和 revision 保存
 
-rename 处理按事件串行。打开会话先更新 store，再通过现有 persistence 保存；未打开会话按 active/history 目录枚举，使用 repository `load/save` 和 expected revision 更新。打开会话 ID 在持久化扫描中跳过，避免双写。单个损坏会话只记录错误，不阻断其他会话。
+rename 处理按事件串行。打开会话先更新 store，再通过现有 persistence 保存；未打开会话按 active/history 目录枚举，使用 repository `load/save` 和 expected revision 更新。打开会话 ID 在持久化扫描中跳过，避免双写。单个损坏会话只记录错误，不阻断其他会话。stored/open 的 exact 与 folder 路由 SHALL 仅重写当前 Vault 的完整 verified 三元组：当前路径（stored 同时包括 enumeration 时 observed 路径）必须是 Vault-relative Markdown，Vault ID 必须等于 currentVaultId，ctime 必须存在；rename 不得将 PDF、绝对路径或 traversal 路径升级为 verified。显式选择产生的 pending anchor 保持独立的 remap 语义。
 
 ### D8：审计补充的事务与持久化边界
 

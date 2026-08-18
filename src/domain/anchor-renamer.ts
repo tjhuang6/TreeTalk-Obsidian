@@ -1,3 +1,4 @@
+import { isVaultRelativeMarkdownPath } from "./anchor-path";
 import { parseConversation } from "./schema";
 import type { ConversationFile } from "./types";
 
@@ -79,8 +80,25 @@ function isVerifiedInCurrentVault(
   return (
     currentVaultId !== undefined &&
     anchor.anchorVaultId === currentVaultId &&
-    typeof anchor.anchorFilePath === "string" &&
+    isVaultRelativeMarkdownPath(anchor.anchorFilePath) &&
     typeof anchor.anchorFileCtime === "number"
+  );
+}
+
+/**
+ * Stored records carry the original triple observed during enumeration. Both the
+ * current candidate and the observed triple must already be eligible; a rename
+ * event must never upgrade an invalid path into a verified Markdown anchor.
+ */
+function isStoredVerifiedInCurrentVault(
+  record: StoredAnchorRecord,
+  currentVaultId: string | undefined
+): boolean {
+  return (
+    isVerifiedInCurrentVault(record, currentVaultId) &&
+    record.observedAnchorVaultId === currentVaultId &&
+    isVaultRelativeMarkdownPath(record.observedAnchorFilePath) &&
+    typeof record.observedAnchorFileCtime === "number"
   );
 }
 
@@ -135,7 +153,7 @@ export class AnchorRenamer {
       const updates: AnchorUpdate[] = [];
       let anySkipped = false;
       for (const record of stored) {
-        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(record, currentVaultId)) continue;
+        if (!isStoredVerifiedInCurrentVault(record, currentVaultId)) continue;
         if (this.store.skipOpenConversationIds.has(record.conversationId)) {
           anySkipped = true;
           continue;
@@ -190,7 +208,7 @@ export class AnchorRenamer {
       const updates: AnchorUpdate[] = [];
       let anySkipped = false;
       for (const record of stored) {
-        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(record, currentVaultId)) continue;
+        if (!isStoredVerifiedInCurrentVault(record, currentVaultId)) continue;
         if (this.store.skipOpenConversationIds.has(record.conversationId)) {
           anySkipped = true;
           continue;
@@ -245,7 +263,7 @@ export class AnchorRenamer {
   ): Promise<void> {
     return this.enqueue(async () => {
       for (const conversation of openConversations) {
-        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(conversation, currentVaultId)) continue;
+        if (!isVerifiedInCurrentVault(conversation, currentVaultId)) continue;
         const next = rewritePath(conversation.anchorFilePath ?? "", {
           from: oldPath,
           to: newPath
@@ -270,7 +288,7 @@ export class AnchorRenamer {
   ): Promise<void> {
     return this.enqueue(async () => {
       for (const conversation of openConversations) {
-        if (currentVaultId !== undefined && !isVerifiedInCurrentVault(conversation, currentVaultId)) continue;
+        if (!isVerifiedInCurrentVault(conversation, currentVaultId)) continue;
         const next = rewritePath(conversation.anchorFilePath ?? "", {
           oldPrefix,
           newPrefix

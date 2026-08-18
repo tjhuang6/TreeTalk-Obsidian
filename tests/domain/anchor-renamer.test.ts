@@ -37,7 +37,7 @@ describe("AnchorRenamer.applyExactRename", () => {
       saveStored: async () => undefined,
       skipOpenConversationIds: new Set()
     });
-    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW);
+    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW, VAULT_ID);
     expect(result).not.toBeNull();
     expect(result?.updates).toEqual([
       expect.objectContaining({
@@ -57,7 +57,7 @@ describe("AnchorRenamer.applyExactRename", () => {
       skipOpenConversationIds: new Set()
     });
 
-    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW);
+    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW, VAULT_ID);
 
     expect(saveStored).toHaveBeenCalledOnce();
     expect(result).toBeNull();
@@ -106,7 +106,7 @@ describe("AnchorRenamer.applyExactRename", () => {
       saveStored,
       skipOpenConversationIds: new Set(["c1"])
     });
-    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW);
+    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW, VAULT_ID);
     expect(result?.updates).toEqual([]);
     expect(saveStored).not.toHaveBeenCalled();
   });
@@ -120,7 +120,7 @@ describe("AnchorRenamer.applyFolderMove", () => {
       saveStored: async () => undefined,
       skipOpenConversationIds: new Set()
     });
-    const result = await renamer.applyFolderMove("Notes", "Archive/Notes", NOW);
+    const result = await renamer.applyFolderMove("Notes", "Archive/Notes", NOW, VAULT_ID);
     expect(result?.updates).toHaveLength(1);
     expect(stored[0]?.anchorFilePath).toBe("Archive/Notes/a.md");
   });
@@ -137,7 +137,7 @@ describe("AnchorRenamer.applyFolderMove", () => {
     expect(stored[0]?.anchorFilePath).toBe("Notes/a.md");
   });
 
-  it("isolates a single bad record and continues with the rest", async () => {
+  it("skips an invalid record and continues with valid stored anchors", async () => {
     const good = makeStored();
     const bad: StoredAnchorRecord = {
       ...makeStored(),
@@ -158,9 +158,9 @@ describe("AnchorRenamer.applyFolderMove", () => {
       skipOpenConversationIds: new Set(),
       onError: (error) => errors.push(error)
     });
-    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW);
+    const result = await renamer.applyExactRename("Notes/a.md", "Notes/b.md", NOW, VAULT_ID);
     expect(result?.updates.map((u) => u.nextPath)).toContain("Notes/b.md");
-    expect(errors.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
   });
 });
 
@@ -183,7 +183,7 @@ describe("AnchorRenamer.open conversation path updates", () => {
       saveStored: async () => undefined,
       skipOpenConversationIds: new Set()
     });
-    await renamer.applyExactRenameToOpen(open, "Notes/a.md", "Notes/b.md");
+    await renamer.applyExactRenameToOpen(open, "Notes/a.md", "Notes/b.md", VAULT_ID);
     expect(open[0]?.anchorFilePath).toBe("Notes/b.md");
   });
 
@@ -200,7 +200,7 @@ describe("AnchorRenamer.open conversation path updates", () => {
       saveStored: async () => undefined,
       skipOpenConversationIds: new Set()
     });
-    await renamer.applyFolderMoveToOpen(open, "Notes", "Archive/Notes");
+    await renamer.applyFolderMoveToOpen(open, "Notes", "Archive/Notes", VAULT_ID);
     expect(open[0]?.anchorFilePath).toBe("Archive/Notes/sub/note.md");
   });
 

@@ -102,6 +102,68 @@ describe("AnchorRenameWorkflow", () => {
     expect(result.openConversations[0]?.anchorFilePath).toBe("Notes/b.md");
   });
 
+  it("keeps complete PDF stored and open triples unchanged when a file rename ends in Markdown", async () => {
+    const records = [stored("pdf", "attachments/scan.pdf")];
+    const saveStored = vi.fn(async () => undefined);
+    const renamer = new AnchorRenamer({
+      loadStored: async () => records,
+      saveStored,
+      skipOpenConversationIds: new Set()
+    });
+    const pdfOpen = open("attachments/scan.pdf");
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
+
+    const result = await workflow.apply(
+      {
+        kind: "file",
+        oldPath: "attachments/scan.pdf",
+        newPath: "attachments/scan.md"
+      },
+      () => [pdfOpen],
+      NOW
+    );
+
+    expect(saveStored).not.toHaveBeenCalled();
+    expect(result.stored).toBeNull();
+    expect(records[0]).toMatchObject({
+      anchorFilePath: "attachments/scan.pdf",
+      revision: 1
+    });
+    expect(result.openConversations[0]).toMatchObject({
+      anchorFilePath: "attachments/scan.pdf",
+      revision: 0
+    });
+  });
+
+  it("does not upgrade invalid stored or open paths through a folder rename", async () => {
+    const records = [stored("pdf", "attachments/scan.pdf")];
+    const saveStored = vi.fn(async () => undefined);
+    const renamer = new AnchorRenamer({
+      loadStored: async () => records,
+      saveStored,
+      skipOpenConversationIds: new Set()
+    });
+    const pdfOpen = open("attachments/scan.pdf");
+    const workflow = new AnchorRenameWorkflow(renamer, VAULT_ID);
+
+    const result = await workflow.apply(
+      { kind: "folder", oldPath: "attachments", newPath: "Archive/attachments" },
+      () => [pdfOpen],
+      NOW
+    );
+
+    expect(saveStored).not.toHaveBeenCalled();
+    expect(result.stored).toBeNull();
+    expect(records[0]).toMatchObject({
+      anchorFilePath: "attachments/scan.pdf",
+      revision: 1
+    });
+    expect(result.openConversations[0]).toMatchObject({
+      anchorFilePath: "attachments/scan.pdf",
+      revision: 0
+    });
+  });
+
   it("does not rewrite a same-path foreign open anchor", async () => {
     const saveStored = async (): Promise<undefined> => undefined;
     const renamer = new AnchorRenamer({
