@@ -10,6 +10,20 @@ import {
   type RelatedNoteDepth,
   type TreeTalkSettings
 } from "./tabs/plugin-data";
+import {
+  getProviderPreset,
+  PROVIDER_PRESETS,
+  validateBaseUrl
+} from "./providers/presets";
+import { Notice } from "obsidian";
+
+function providerOptions(): Record<string, string> {
+  const options: Record<string, string> = {};
+  for (const preset of Object.values(PROVIDER_PRESETS)) {
+    options[preset.key] = preset.name;
+  }
+  return options;
+}
 
 /** Minimal surface of TreeTalkPlugin consumed by the settings tab. */
 export interface TreeTalkSettingsPort {
@@ -88,19 +102,45 @@ export class TreeTalkSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
-        heading: "DeepSeek API",
+        heading: "模型 API",
         items: [
           {
+            name: "供应商",
+            desc: "选择模型供应商；切换后请在下方填写对应模型与 API Key。",
+            control: {
+              type: "dropdown",
+              key: "provider",
+              options: providerOptions()
+            }
+          },
+          {
             name: "模型",
+            desc: (() => {
+              const preset = getProviderPreset(
+                this.plugin.getSettings().provider
+              );
+              const models = preset?.models ?? [];
+              return models.length > 0
+                ? `建议：${models.join(" / ")}`
+                : "填写供应商支持的模型 ID";
+            })(),
             control: { type: "text", key: "model" }
           },
           {
             name: "API 地址",
-            desc: "留空使用 DeepSeek 官方地址",
+            desc: "留空使用供应商官方地址；自定义地址必须使用 https",
             control: {
               type: "text",
               key: "baseUrl",
-              placeholder: "留空使用 DeepSeek 官方地址"
+              placeholder: (() => {
+                const preset = getProviderPreset(
+                  this.plugin.getSettings().provider
+                );
+                return preset?.baseUrl !== undefined &&
+                  preset.baseUrl.length > 0
+                  ? preset.baseUrl
+                  : "https://…";
+              })()
             }
           },
           {
@@ -121,12 +161,16 @@ export class TreeTalkSettingTab extends PluginSettingTab {
           },
           {
             name: "联网模式",
-            desc: "开启后，DeepSeek 会根据问题自动判断是否需要搜索网页。当前仅支持 DeepSeek。",
+            desc: "开启后，DeepSeek 会根据问题自动判断是否需要搜索网页。仅 DeepSeek 支持。",
             control: {
               type: "toggle",
               key: "webSearchEnabled",
-              disabled: () =>
-                this.plugin.getSettings().provider !== "deepseek"
+              disabled: () => {
+                const preset = getProviderPreset(
+                  this.plugin.getSettings().provider
+                );
+                return preset?.supportsWebSearch !== true;
+              }
             }
           }
         ]
@@ -209,6 +253,8 @@ export class TreeTalkSettingTab extends PluginSettingTab {
         return settings.streamingOutputEnabled;
       case "answerThinkingEnabled":
         return settings.answerThinkingMode === "enabled";
+      case "provider":
+        return settings.provider;
       case "model":
         return settings.model;
       case "baseUrl":
@@ -257,18 +303,40 @@ export class TreeTalkSettingTab extends PluginSettingTab {
           answerThinkingMode: value ? "enabled" : "disabled"
         });
         break;
+      case "provider": {
+        const nextProvider = String(value);
+        await this.plugin.updateSettings({
+          ...settings,
+          provider: nextProvider,
+          // 切换供应商时，用新 preset 的默认模型补齐空模型；已填模型保留。
+          model: normalizeConfiguredModel(nextProvider, settings.model)
+        });
+        this.update();
+        break;
+      }
       case "model":
         await this.plugin.updateSettings({
           ...settings,
-          model: normalizeConfiguredModel("deepseek", String(value))
+          model: normalizeConfiguredModel(settings.provider, String(value))
         });
         break;
-      case "baseUrl":
+      case "baseUrl": {
+        const nextBaseUrl = String(value);
+        const validation = validateBaseUrl(nextBaseUrl);
+        if (!validation.ok) {
+          new Notice(`API 地址无效：${validation.reason ?? "格式错误"}`);
+          this.update();
+          break;
+        }
+        if (validation.warning !== undefined) {
+          new Notice(validation.warning);
+        }
         await this.plugin.updateSettings({
           ...settings,
-          baseUrl: String(value)
+          baseUrl: nextBaseUrl
         });
         break;
+      }
       case "apiKey":
         this.plugin.setApiKey(String(value));
         break;

@@ -127,6 +127,27 @@ function nextRevision(conversation: ConversationFile, now: string): void {
   conversation.updatedAt = now;
 }
 
+export function isMarkdownPath(path: string): boolean {
+  return /\.md$/iu.test(path);
+}
+
+export function hasUserMessage(conversation: ConversationFile): boolean {
+  return Object.values(conversation.nodes).some((node) =>
+    node.messages.some((message) => message.role === "user")
+  );
+}
+
+function applyAnchor(
+  state: ConversationFile,
+  anchorFilePath: string | undefined
+): void {
+  // 锚点只在对话尚无任何用户消息时写入一次；之后任何消息不得修改。
+  if (anchorFilePath === undefined) return;
+  if (hasUserMessage(state)) return;
+  if (!isMarkdownPath(anchorFilePath)) return;
+  state.anchorFilePath = anchorFilePath;
+}
+
 export function continueNode(
   conversation: ConversationFile,
   input: ContinueNodeInput
@@ -142,10 +163,8 @@ export function continueNode(
   const previousCurrentNodeId = state.currentNodeId;
   const selectionContexts =
     input.selectionContexts ?? node.draft.selectionContexts;
-  // 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (空路径不覆盖已有锚点)
-  if ((state.anchorFilePath === undefined || state.anchorFilePath === null || state.anchorFilePath === "") && input.anchorFilePath) {
-    state.anchorFilePath = input.anchorFilePath;
-  }
+  // 锚点：仅对话尚无用户消息时写入（见 applyAnchor），一次决定后冻结。
+  applyAnchor(state, input.anchorFilePath);
   node.messages.push(
     userMessage(input.messageId, text, input.now, selectionContexts)
   );
@@ -291,10 +310,8 @@ export function submitChildDraft(
   const previousChildIds = [...parent.childIds];
   const previousCurrentNodeId = state.currentNodeId;
   const previousTitles = applyFirstQuestionTitle(state, text);
-  // 诉求1: 首条消息时锁定当前打开的 md 笔记路径 (空路径不覆盖已有锚点)
-  if ((state.anchorFilePath === undefined || state.anchorFilePath === null || state.anchorFilePath === "") && input.anchorFilePath) {
-    state.anchorFilePath = input.anchorFilePath;
-  }
+  // 锚点：仅对话尚无用户消息时写入（见 applyAnchor），一次决定后冻结。
+  applyAnchor(state, input.anchorFilePath);
   const firstMessage = userMessage(
     input.messageId,
     text,

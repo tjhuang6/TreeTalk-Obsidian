@@ -1,5 +1,20 @@
 # TreeTalk Changelog
 
+## Unreleased: 显式文件锚定与多供应商支持
+
+- 新增右键菜单「锚定 TreeTalk 对话到此笔记」（编辑器正文与文件管理器均可），
+  在发送首条消息时把锚点与消息在同一次原子操作中写入对话；锚点仅接受 `.md`，
+  且只在对话尚无用户消息时确定一次，之后不再变更。
+- 收紧既有锚点写入逻辑：修复此前任意后续消息都可能补写锚点、且不筛非 Markdown
+  文件的问题。
+- 新增供应商目录（`src/providers/presets.ts`）：deepseek、智谱 GLM、MiniMax、
+  OpenRouter、Kimi/Moonshot、SiliconFlow、DashScope(Qwen)、OpenAI、Anthropic、
+  Gemini 与自定义 OpenAI 兼容端点，映射到既有 wire 适配器（openai_chat /
+  anthropic / gemini），支持别名解析。
+- 设置页解除 DeepSeek 硬编码：可选择供应商与模型；`baseUrl` 保存时校验（默认要求
+  https，拒绝内嵌凭据，本地回环地址允许但提示明文风险）。
+- 能力降级：联网搜索开关仅在支持的供应商（当前仅 DeepSeek）下可用。
+
 ## 0.9.5: Optimization release
 
 - Coalesce canonical streaming text updates at 100 ms so long answers avoid

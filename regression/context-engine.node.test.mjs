@@ -363,12 +363,14 @@ void test("transient token stats use the agreed display thresholds", () => {
   assert.equal(store.get("message"), undefined);
 });
 
-void test("plugin settings normalize to fixed full context and DeepSeek", () => {
+void test("plugin settings normalize to fixed full context and preserve provider", () => {
   const { parsePluginData } = load("src/tabs/plugin-data.js");
   const migrated = parsePluginData({ provider: "openai", model: "gpt-test" });
   assert.equal(migrated.settings.contextOptimizationEnabled, false);
   assert.equal(migrated.settings.contextMode, "full");
   assert.equal(migrated.settings.webSearchEnabled, false);
+  assert.equal(migrated.settings.provider, "openai");
+  assert.equal(migrated.settings.model, "gpt-test");
   const deepseek = parsePluginData({
     settings: {
       ...migrated.settings,
@@ -381,9 +383,9 @@ void test("plugin settings normalize to fixed full context and DeepSeek", () => 
   assert.equal(deepseek.settings.provider, "deepseek");
   assert.equal(deepseek.settings.contextMode, "full");
   assert.equal(deepseek.settings.contextOptimizationEnabled, false);
-  const legacy = parsePluginData({ settings: { ...migrated.settings, provider: "deepseek", model: "deepseek-chat", webSearchEnabled: true } });
-  assert.equal(legacy.settings.model, "deepseek-v4-flash");
-  assert.equal(legacy.settings.webSearchEnabled, true);
+  const preserved = parsePluginData({ settings: { ...migrated.settings, provider: "deepseek", model: "deepseek-chat", webSearchEnabled: true } });
+  assert.equal(preserved.settings.model, "deepseek-chat");
+  assert.equal(preserved.settings.webSearchEnabled, true);
 });
 
 void test("full and balanced modes use versioned OpenAI cache routing keys", () => {

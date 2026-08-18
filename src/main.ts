@@ -3,7 +3,8 @@ import {
   Notice,
   Plugin,
   requestUrl,
-  TFile
+  TFile,
+  type Menu
 } from "obsidian";
 import { ArchiveService } from "./archive/archive-service";
 import { LifecycleQueue } from "./archive/lifecycle-queue";
@@ -25,6 +26,8 @@ import {
 } from "./domain/markdown-compatibility";
 import {
   continueNode,
+  hasUserMessage,
+  isMarkdownPath,
   submitChildDraft,
   toggleBranchDraft
 } from "./domain/tree-commands";
@@ -62,6 +65,7 @@ import type { ExecutionMode, ExecutionRequest } from "./execution/types";
 import { ActiveResponseRequests } from "./providers/active-response-requests";
 import type { ActiveResponseHandle } from "./providers/active-response-requests";
 import { ProviderRegistry } from "./providers/provider-registry";
+import { resolveProfile } from "./providers/presets";
 import { NodeSummaryCoordinator } from "./providers/node-summary-coordinator";
 import { StreamingProviderTransport } from "./providers/streaming-transport";
 import type { ProviderProfile } from "./providers/types";
@@ -313,6 +317,9 @@ export default class TreeTalkPlugin extends Plugin {
   private dataSaveTail: Promise<void> = Promise.resolve();
   private readonly webSearchListeners = new Set<() => void>();
   private readonly composerControlListeners = new Set<() => void>();
+  /** 显式锚定：tabId -> 待落库的笔记路径（仅首条消息时进入 canonical 数据）。 */
+  private readonly pendingAnchors = new Map<string, string>();
+  private readonly anchorChipListeners = new Set<() => void>();
 
   async onload(): Promise<void> {
     this.registerEditorExtension(createExcerptDropExtension());
@@ -460,6 +467,7 @@ export default class TreeTalkPlugin extends Plugin {
       new ObsidianSidebarWorkspacePort(this.app.workspace)
     );
     this.registerCommands();
+    this.registerAnchorMenus();
     this.addSettingTab(new TreeTalkSettingTab(this.app, this));
     this.app.workspace.onLayoutReady(() => {
       void this.coordinator?.repairLegacyViews();
@@ -536,6 +544,47 @@ export default class TreeTalkPlugin extends Plugin {
   subscribeComposerControls(listener: () => void): () => void {
     this.composerControlListeners.add(listener);
     return () => this.composerControlListeners.delete(listener);
+  }
+
+  /** 供输入区锚点 chip 订阅 pending anchor 变化。 */
+  subscribeAnchorChip(listener: () => void): () => void {
+    this.anchorChipListeners.add(listener);
+    return () => this.anchorChipListeners.delete(listener);
+  }
+
+  getPendingAnchor(tabId: string): string | undefined {
+    return this.pendingAnchors.get(tabId);
+  }
+
+  clearPendingAnchor(tabId: string): void {
+    this.pendingAnchors.delete(tabId);
+    this.notifyAnchorChipListeners();
+  }
+
+  private notifyAnchorChipListeners(): void {
+    for (const listener of [...this.anchorChipListeners]) listener();
+  }
+
+  /** 显式锚定入口（右键菜单调用）：对话无用户消息且路径为 .md 时记录 pending。 */
+  async anchorConversationToFile(filePath: string): Promise<void> {
+    if (!isMarkdownPath(filePath)) return;
+    let tab = this.tabsStore.getActiveTab();
+    if (tab === undefined || tab.mode !== "active" || tab.lifecycle !== "idle") {
+      await this.createConversationTab();
+      tab = this.tabsStore.getActiveTab();
+    }
+    if (tab === undefined || tab.mode !== "active") return;
+    if (hasUserMessage(tab.conversation)) {
+      new Notice("当前对话已有消息，锚点在首条消息时确定，无法再更改");
+      return;
+    }
+    if (tab.conversation.anchorFilePath !== undefined) {
+      new Notice("当前对话已锚定，锚点不可更改");
+      return;
+    }
+    this.pendingAnchors.set(tab.id, filePath);
+    this.notifyAnchorChipListeners();
+    new Notice(`已锚定到 ${filePath}，发送首条消息后生效`);
   }
 
   private setWebSearchEnabled(enabled: boolean): Promise<void> {
@@ -766,6 +815,39 @@ export default class TreeTalkPlugin extends Plugin {
     }
   }
 
+  private registerAnchorMenus(): void {
+    const anchorItem = (menu: Menu, filePath: string): void => {
+      menu.addItem((item) =>
+        item
+          .setTitle("锚定 TreeTalk 对话到此笔记")
+          .setIcon("anchor")
+          .onClick(() => {
+            void this.anchorConversationToFile(filePath);
+          })
+      );
+    };
+    // 主编辑区正文右键（用户确认的主要触发方式）。
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu, _editor, context) => {
+        const file = context?.file;
+        if (file !== null && file !== undefined && isMarkdownPath(file.path)) {
+          anchorItem(menu, file.path);
+        }
+      })
+    );
+    // 左侧文件管理器 / 标签页右键。
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (
+          file instanceof TFile &&
+          isMarkdownPath(file.path)
+        ) {
+          anchorItem(menu, file.path);
+        }
+      })
+    );
+  }
+
   private async restoreActiveTab(): Promise<void> {
     const tabId = this.tabsStore.getSnapshot().activeTabId;
     if (tabId === null) return;
@@ -779,13 +861,12 @@ export default class TreeTalkPlugin extends Plugin {
   }
 
   private currentProviderProfile(): ProviderProfile {
-    return {
-      id: "default",
-      name: "默认",
-      kind: "deepseek",
-      apiKey: this.getApiKey(),
-      baseUrl: this.pluginSettings.baseUrl
-    };
+    return resolveProfile({
+      provider: this.pluginSettings.provider,
+      model: this.pluginSettings.model,
+      baseUrl: this.pluginSettings.baseUrl,
+      apiKey: this.getApiKey()
+    });
   }
 
   private toggleActiveBranch(): void {
@@ -852,10 +933,19 @@ export default class TreeTalkPlugin extends Plugin {
     const relatedNoteDepth = this.pluginSettings.relatedNoteDepth;
     const contextDivergenceEnabled =
       this.pluginSettings.contextDivergenceEnabled;
-    // 诉求1: 获取当前打开的 md 笔记路径, 传给 submitChildDraft/continueNode 用于锚定沉淀目录
-    // 修复: 用 getActiveFile() 而非 activeMarkdownSelectionSource(),
-    // 因为发消息时焦点在 TreeTalk 输入框, getActiveViewOfType(MarkdownView) 返回 null
-    const anchorFilePath = this.app.workspace.getActiveFile()?.path;
+    // 锚点来源优先级：显式右键锚定（pending anchor）> 当前活动 .md 文件。
+    // 领域层 applyAnchor 只在对话无用户消息时接受写入，因此这里无需重复判断
+    // 「是否首条」；但 getActiveFile() 兜底只在尚未锚定时才有意义。
+    const pendingAnchor = this.pendingAnchors.get(tab.id);
+    const activeFilePath = this.app.workspace.getActiveFile()?.path;
+    const alreadyAnchored = before.anchorFilePath !== undefined;
+    const fallbackAnchor =
+      alreadyAnchored || pendingAnchor !== undefined
+        ? undefined
+        : activeFilePath !== undefined && isMarkdownPath(activeFilePath)
+          ? activeFilePath
+          : undefined;
+    const anchorFilePath = pendingAnchor ?? fallbackAnchor;
     const userMessageId = crypto.randomUUID();
     const childInput = {
       text,
@@ -879,6 +969,9 @@ export default class TreeTalkPlugin extends Plugin {
       current.draft.mode === "child"
         ? submitChildDraft(before, childInput)
         : continueNode(before, continueInput);
+    // 锚点已随本次 tree command 落库（或对话已有消息、锚点不再可写），清理 pending。
+    this.pendingAnchors.delete(tab.id);
+    this.notifyAnchorChipListeners();
     this.tabsStore.updateConversation(tab.id, () => command.state);
     let requestState = command.state;
     try {

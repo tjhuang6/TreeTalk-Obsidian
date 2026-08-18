@@ -1,7 +1,10 @@
 import type { ContextMode } from "../domain/context-engine";
 import type { ExecutionMode } from "../execution/types";
 import type { AnswerThinkingMode } from "../execution/answer-thinking";
-import type { ProviderKind } from "../providers/types";
+import {
+  getProviderPreset,
+  normalizeProviderKey
+} from "../providers/presets";
 import {
   parseTabsWorkspaceData,
   type TabsWorkspaceData
@@ -23,7 +26,8 @@ export interface DepositGraphWindowState {
 
 export interface TreeTalkSettings {
   executionMode: ExecutionMode;
-  provider: ProviderKind;
+  /** Provider preset key (see providers/presets). Free-form to allow custom endpoints. */
+  provider: string;
   model: string;
   baseUrl: string;
   treeWidth: number;
@@ -90,31 +94,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function normalizeConfiguredModel(
-  provider: ProviderKind,
+  provider: string,
   model: string
 ): string {
   const trimmed = model.trim();
-  if (provider === "deepseek") {
-    if (
-      trimmed === "deepseek-chat" ||
-      trimmed === "deepseek-reasoner" ||
-      !trimmed.startsWith("deepseek-")
-    ) {
-      return "deepseek-v4-flash";
-    }
-    return trimmed;
-  }
-  return trimmed.length > 0 ? trimmed : DEFAULT_SETTINGS.model;
+  if (trimmed.length > 0) return trimmed;
+  const preset = getProviderPreset(provider);
+  return preset?.defaultModel !== undefined && preset.defaultModel.length > 0
+    ? preset.defaultModel
+    : DEFAULT_SETTINGS.model;
 }
 
 export function normalizeTreeTalkSettings(
   settings: TreeTalkSettings
 ): TreeTalkSettings {
+  const provider = normalizeProviderKey(settings.provider);
   return {
     ...settings,
     executionMode: "pi",
-    provider: "deepseek",
-    model: normalizeConfiguredModel("deepseek", settings.model),
+    provider,
+    model: normalizeConfiguredModel(provider, settings.model),
     contextOptimizationEnabled: false,
     contextMode: "full",
     answerThinkingMode:
@@ -176,7 +175,9 @@ function parseSettings(value: unknown): TreeTalkSettings {
     typeof value.contextOptimizationEnabled === "boolean"
       ? value.contextOptimizationEnabled
       : DEFAULT_SETTINGS.contextOptimizationEnabled;
-  const provider: ProviderKind = "deepseek";
+  const provider = normalizeProviderKey(
+    typeof value.provider === "string" ? value.provider : DEFAULT_SETTINGS.provider
+  );
   const model = normalizeConfiguredModel(
     provider,
     typeof value.model === "string" ? value.model : DEFAULT_SETTINGS.model
