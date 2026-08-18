@@ -13,30 +13,15 @@ import {
   normalizeAnthropicUsage,
   normalizeOpenAiCompatibleUsage
 } from "./stream-parser";
+import {
+  deepSeekAnthropicBaseUrl,
+  deepSeekApiRoot
+} from "./deepseek-url";
 
 function join(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/u, "")}/${path.replace(/^\/+/u, "")}`;
 }
 
-function deepSeekApiRoot(baseUrl: string): string {
-  const configured =
-    baseUrl.trim().length > 0 ? baseUrl.trim() : "https://api.deepseek.com";
-  try {
-    const parsed = new URL(configured);
-    if (parsed.hostname.toLowerCase() === "api.deepseek.com") {
-      return `${parsed.protocol}//${parsed.host}`;
-    }
-  } catch {
-    // Fall through to tolerant path cleanup for custom compatible endpoints.
-  }
-  return configured
-    .replace(/\/+$/u, "")
-    .replace(/\/(?:anthropic(?:\/v1(?:\/messages)?)?|chat\/completions)$/u, "");
-}
-
-function anthropicBaseUrl(baseUrl: string): string {
-  return join(deepSeekApiRoot(baseUrl), "anthropic");
-}
 
 function anthropicMessages(input: ProviderInput): {
   system: string;
@@ -140,7 +125,7 @@ function anthropicRequest(
     Math.min(5, Math.trunc(input.webSearchMaxUses ?? 5))
   );
   return {
-    url: join(anthropicBaseUrl(profile.baseUrl), "v1/messages"),
+    url: join(deepSeekAnthropicBaseUrl(profile.baseUrl), "v1/messages"),
     method: "POST",
     headers: {
       "x-api-key": profile.apiKey,

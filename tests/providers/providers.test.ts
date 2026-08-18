@@ -3,6 +3,8 @@ import { AnthropicProvider } from "../../src/providers/anthropic-provider";
 import { DeepSeekProvider } from "../../src/providers/deepseek-provider";
 import { GeminiProvider } from "../../src/providers/gemini-provider";
 import { OpenAiProvider } from "../../src/providers/openai-provider";
+import { ProviderRegistry } from "../../src/providers/provider-registry";
+import { resolveProfile } from "../../src/providers/presets";
 import type { ProviderInput, ProviderProfile } from "../../src/providers/types";
 
 const INPUT: ProviderInput = {
@@ -27,6 +29,33 @@ function profile(kind: ProviderProfile["kind"]): ProviderProfile {
 }
 
 describe("provider request adapters", () => {
+  it("selects DeepSeekProvider from the resolved DeepSeek profile", () => {
+    const resolved = resolveProfile({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      baseUrl: "",
+      apiKey: "secret"
+    });
+    const provider = new ProviderRegistry().get(resolved);
+
+    expect(provider.kind).toBe("deepseek");
+    expect(
+      provider.buildRequest({ ...INPUT, model: "deepseek-v4-flash" }, resolved).url
+    ).toBe("https://api.deepseek.com/anthropic/v1/messages");
+  });
+
+  it("builds the MiniMax preset URL as an Anthropic messages request", () => {
+    const resolved = resolveProfile({
+      provider: "minimax",
+      model: "MiniMax-M3",
+      baseUrl: "",
+      apiKey: "secret"
+    });
+    expect(
+      new ProviderRegistry().get(resolved).buildRequest(INPUT, resolved).url
+    ).toBe("https://api.minimaxi.com/anthropic/v1/messages");
+  });
+
   it("builds an OpenAI chat completion request", () => {
     const request = new OpenAiProvider().buildRequest(INPUT, profile("openai"));
     expect(request.url).toBe("https://api.openai.com/v1/chat/completions");

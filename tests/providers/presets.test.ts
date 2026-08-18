@@ -12,6 +12,7 @@ describe("provider presets catalog", () => {
     const validKinds = new Set([
       "openai",
       "openai-compatible",
+      "deepseek",
       "anthropic",
       "gemini"
     ]);
@@ -77,12 +78,23 @@ describe("resolveProfile", () => {
     expect(profile.kind).toBe("openai");
   });
 
+  it("resolves DeepSeek to its dedicated adapter kind", () => {
+    expect(
+      resolveProfile({
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        baseUrl: "",
+        apiKey: "secret"
+      }).kind
+    ).toBe("deepseek");
+  });
+
   it("resolves minimax and anthropic to the anthropic wire kind", () => {
     expect(
-      resolveProfile({ provider: "minimax", model: "MiniMax-M2", baseUrl: "", apiKey: "k" }).kind
+      resolveProfile({ provider: "minimax", model: "MiniMax-M2", baseUrl: "", apiKey: "secret" }).kind
     ).toBe("anthropic");
     expect(
-      resolveProfile({ provider: "claude", model: "x", baseUrl: "", apiKey: "k" }).kind
+      resolveProfile({ provider: "claude", model: "x", baseUrl: "", apiKey: "secret" }).kind
     ).toBe("anthropic");
   });
 

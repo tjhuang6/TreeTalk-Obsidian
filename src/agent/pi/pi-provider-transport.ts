@@ -7,6 +7,7 @@ import type {
   ProviderProfile,
   ProviderRequest
 } from "../../providers/types";
+import { deepSeekAnthropicMessagesUrl } from "../../providers/deepseek-url";
 import type { PiToolDefinition } from "./context-workspace";
 
 export interface PiToolCall {
@@ -256,6 +257,20 @@ function anthropicRequest(input: PiProviderTurnInput): ProviderRequest {
       stream: input.stream === true,
       system: input.systemPrompt,
       messages: anthropicMessages(input.messages),
+      ...(input.thinkingEnabled === undefined
+        ? {}
+        : {
+            thinking: {
+              type:
+                input.profile.baseUrl.includes("api.minimaxi.com")
+                  ? input.thinkingEnabled
+                    ? "adaptive"
+                    : "disabled"
+                  : input.thinkingEnabled
+                    ? "enabled"
+                    : "disabled"
+            }
+          }),
       ...(input.tools.length === 0
         ? {}
         : {
@@ -365,6 +380,10 @@ function geminiRequest(input: PiProviderTurnInput): ProviderRequest {
 export function buildPiProviderRequest(
   input: PiProviderTurnInput
 ): ProviderRequest {
+  if (input.profile.kind === "deepseek") {
+    const request = anthropicRequest(input);
+    return { ...request, url: deepSeekAnthropicMessagesUrl(input.profile.baseUrl) };
+  }
   if (input.profile.kind === "anthropic") return anthropicRequest(input);
   if (input.profile.kind === "gemini") return geminiRequest(input);
   return openAiRequest(input);
@@ -535,6 +554,10 @@ export function parsePiProviderResponse(
   profile: ProviderProfile,
   value: unknown
 ): PiProviderTurnResult {
+  if (profile.kind === "deepseek") {
+    const body = asRecord(value);
+    return Array.isArray(body?.content) ? parseAnthropic(value) : parseOpenAi(value);
+  }
   if (profile.kind === "anthropic") return parseAnthropic(value);
   if (profile.kind === "gemini") return parseGemini(value);
   return parseOpenAi(value);

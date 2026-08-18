@@ -9,7 +9,7 @@ import type { ProviderKind, ProviderProfile } from "./types";
  * always maps onto an existing {@link ProviderKind} adapter — this module
  * never introduces a new protocol, only new endpoints/branding.
  */
-export type WireFormat = "openai_chat" | "anthropic" | "gemini";
+export type WireFormat = "openai_chat" | "anthropic" | "deepseek" | "gemini";
 
 export interface ProviderPreset {
   /** Canonical key accepted by settings `provider`. */
@@ -39,6 +39,7 @@ export function kindForWire(
   wire: WireFormat,
   official: boolean
 ): ProviderKind {
+  if (wire === "deepseek") return "deepseek";
   if (wire === "anthropic") return "anthropic";
   if (wire === "gemini") return "gemini";
   return official ? "openai" : "openai-compatible";
@@ -48,7 +49,7 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   deepseek: {
     key: "deepseek",
     name: "DeepSeek",
-    wire: "anthropic",
+    wire: "deepseek",
     baseUrl: "https://api.deepseek.com",
     aliases: [],
     models: ["deepseek-chat", "deepseek-reasoner"],
