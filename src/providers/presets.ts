@@ -74,8 +74,8 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     wire: "anthropic",
     baseUrl: "https://api.minimaxi.com/anthropic",
     aliases: ["minimaxi", "minimax-anthropic"],
-    models: ["MiniMax-M2", "MiniMax-M3"],
-    defaultModel: "MiniMax-M2",
+    models: ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2"],
+    defaultModel: "MiniMax-M3",
     supportsWebSearch: false,
     supportsThinking: true
   },

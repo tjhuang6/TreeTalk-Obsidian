@@ -150,7 +150,7 @@ describe("provider profiles - pure operations", () => {
     };
     const next = switchProfileProvider(state, "minimax");
     expect(next.profiles[0]?.provider).toBe("minimax");
-    expect(next.profiles[0]?.model).toBe("MiniMax-M2");
+    expect(next.profiles[0]?.model).toBe("MiniMax-M3");
     expect(next.profiles[0]?.baseUrl).toBe("");
   });
 
