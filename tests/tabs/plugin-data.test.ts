@@ -83,6 +83,20 @@ describe("TreeTalk plugin data", () => {
     expect(full.settings.contextOptimizationEnabled).toBe(false);
   });
 
+  it("parses provider profiles and defaults missing profiles to empty state", () => {
+    const data = parsePluginData({ settings: { ...DEFAULT_SETTINGS } });
+    expect(data.settings.providerProfiles).toEqual({ activeProfileId: null, profiles: [] });
+    const withProfiles = parsePluginData({ settings: {
+      ...DEFAULT_SETTINGS,
+      providerProfiles: {
+        activeProfileId: "two",
+        profiles: [{ id: "one", label: "One", provider: "deepseek", model: "a", baseUrl: "" }, { id: "two", label: "Two", provider: "minimax", model: "b", baseUrl: "" }]
+      }
+    }});
+    expect(withProfiles.settings.providerProfiles?.profiles).toHaveLength(2);
+    expect(withProfiles.settings.providerProfiles?.activeProfileId).toBe("two");
+  });
+
   it("preserves a configured DeepSeek model and the web-search toggle", () => {
     const data = parsePluginData({
       settings: {

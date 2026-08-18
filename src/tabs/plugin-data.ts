@@ -10,6 +10,7 @@ import {
   type TabsWorkspaceData
 } from "./workspace-state";
 import { logWarning } from "../utils/error-log";
+import type { ProviderProfilesState } from "../providers/provider-profiles";
 
 export type NoteContextTokenBudget = "minimal" | "full" | number;
 export type CompressedNoteTokenBudget = Exclude<NoteContextTokenBudget, "full">;
@@ -30,6 +31,7 @@ export interface TreeTalkSettings {
   provider: string;
   model: string;
   baseUrl: string;
+  providerProfiles?: ProviderProfilesState;
   treeWidth: number;
   knowledgeFolder: string;
   treeCaptureFolder: string;
@@ -58,6 +60,7 @@ export const DEFAULT_SETTINGS: TreeTalkSettings = {
   provider: "deepseek",
   model: "deepseek-v4-flash",
   baseUrl: "",
+  providerProfiles: { activeProfileId: null, profiles: [] },
   treeWidth: 220,
   knowledgeFolder: "TreeTalk 知识",
   treeCaptureFolder: "TreeTalk",
@@ -169,6 +172,22 @@ function parseRelatedNoteDepth(
   return positiveInteger(value) ?? fallback;
 }
 
+function parseProviderProfiles(value: unknown): ProviderProfilesState {
+  if (!isRecord(value) || !Array.isArray(value.profiles)) {
+    return { activeProfileId: null, profiles: [] };
+  }
+  const profiles = value.profiles.filter((profile): profile is ProviderProfilesState["profiles"][number] => {
+    if (!isRecord(profile)) return false;
+    return typeof profile.id === "string" && typeof profile.label === "string" &&
+      typeof profile.provider === "string" && typeof profile.model === "string" &&
+      typeof profile.baseUrl === "string";
+  });
+  return {
+    activeProfileId: typeof value.activeProfileId === "string" ? value.activeProfileId : null,
+    profiles
+  };
+}
+
 function parseSettings(value: unknown): TreeTalkSettings {
   if (!isRecord(value)) return normalizeTreeTalkSettings({ ...DEFAULT_SETTINGS });
   const contextOptimizationEnabled =
@@ -197,6 +216,7 @@ function parseSettings(value: unknown): TreeTalkSettings {
           value.noteContextTokenBudget,
           lastCompressedNoteTokenBudget
         );
+  const providerProfiles = parseProviderProfiles(value.providerProfiles);
   return normalizeTreeTalkSettings({
     executionMode:
       value.executionMode === "legacy" || value.executionMode === "pi"
@@ -208,6 +228,7 @@ function parseSettings(value: unknown): TreeTalkSettings {
       typeof value.baseUrl === "string"
         ? value.baseUrl
         : DEFAULT_SETTINGS.baseUrl,
+    providerProfiles,
     treeWidth:
       typeof value.treeWidth === "number" &&
       Number.isFinite(value.treeWidth) &&

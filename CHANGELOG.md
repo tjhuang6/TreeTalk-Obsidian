@@ -1,5 +1,10 @@
 # TreeTalk Changelog
 
+## Unreleased: 多供应商配置档
+
+- 设置页支持新增、切换、编辑和删除多个供应商配置档；每个配置档的 API Key 使用独立的 Obsidian SecretStorage ID。
+- 旧版 `treetalk-api-key` 与单一 provider/model/baseUrl 会在首次加载时迁移为「默认」配置档；已有配置档时不会覆盖或重复迁移。
+
 ## Unreleased: Vault 感知的文件锚点与沉淀路由
 
 - 为每个 Vault 引入独立持久身份：`VaultIdentityStore` 在

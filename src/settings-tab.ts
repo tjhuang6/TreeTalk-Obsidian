@@ -15,7 +15,22 @@ import {
   PROVIDER_PRESETS,
   validateBaseUrl
 } from "./providers/presets";
+import type {
+  ProviderProfileConfig,
+  ProviderProfilesState
+} from "./providers/provider-profiles";
 import { Notice } from "obsidian";
+
+function settingsProfile(settings: TreeTalkSettings): ProviderProfileConfig {
+  const state = settings.providerProfiles;
+  return state?.profiles.find((profile) => profile.id === state.activeProfileId) ?? state?.profiles[0] ?? {
+    id: "legacy-fallback", label: "默认", provider: settings.provider, model: settings.model, baseUrl: settings.baseUrl
+  };
+}
+
+function profileState(settings: TreeTalkSettings): ProviderProfilesState {
+  return settings.providerProfiles ?? { activeProfileId: null, profiles: [] };
+}
 
 function providerOptions(): Record<string, string> {
   const options: Record<string, string> = {};
@@ -104,6 +119,41 @@ export class TreeTalkSettingTab extends PluginSettingTab {
         type: "group",
         heading: "模型 API",
         items: [
+          {
+            name: "活动配置档",
+            desc: "切换后供应商、模型、API 地址和 API Key 一起切换。",
+            control: {
+              type: "dropdown",
+              key: "activeProfileId",
+              options: Object.fromEntries(profileState(this.plugin.getSettings()).profiles.map((profile) => [profile.id, profile.label]))
+            }
+          },
+          {
+            name: "新增配置档",
+            render: (setting) => {
+              setting.addButton((button) => button.setButtonText("新增").onClick(() => {
+                const settings = this.plugin.getSettings();
+                const state = profileState(settings);
+                const profile: ProviderProfileConfig = { id: crypto.randomUUID(), label: "新配置档", provider: settings.provider, model: settings.model, baseUrl: settings.baseUrl };
+                void this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: profile.id, profiles: [...state.profiles, profile] } });
+              }));
+            }
+          },
+          {
+            name: "删除当前配置档",
+            desc: "至少保留一个配置档。",
+            render: (setting) => {
+              setting.addButton((button) => button.setButtonText("删除").onClick(() => {
+                const settings = this.plugin.getSettings();
+                const state = profileState(settings);
+                if (state.profiles.length <= 1) { new Notice("至少保留一个配置档"); return; }
+                const current = settingsProfile(settings);
+                this.plugin.setApiKey("");
+                const profiles = state.profiles.filter((profile) => profile.id !== current.id);
+                void this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: profiles[0]?.id ?? null, profiles } });
+              }));
+            }
+          },
           {
             name: "供应商",
             desc: "选择模型供应商；切换后请在下方填写对应模型与 API Key。",
@@ -253,12 +303,14 @@ export class TreeTalkSettingTab extends PluginSettingTab {
         return settings.streamingOutputEnabled;
       case "answerThinkingEnabled":
         return settings.answerThinkingMode === "enabled";
+      case "activeProfileId":
+        return profileState(settings).activeProfileId;
       case "provider":
-        return settings.provider;
+        return settingsProfile(settings).provider;
       case "model":
-        return settings.model;
+        return settingsProfile(settings).model;
       case "baseUrl":
-        return settings.baseUrl;
+        return settingsProfile(settings).baseUrl;
       case "apiKey":
         return this.plugin.getApiKey();
       case "obsidianMarkdownCompatibility":
@@ -303,23 +355,30 @@ export class TreeTalkSettingTab extends PluginSettingTab {
           answerThinkingMode: value ? "enabled" : "disabled"
         });
         break;
+      case "activeProfileId": {
+        const state = profileState(settings);
+        if (state.profiles.some((profile) => profile.id === String(value))) {
+          await this.plugin.updateSettings({ ...settings, providerProfiles: { ...state, activeProfileId: String(value) } });
+          this.update();
+        }
+        break;
+      }
       case "provider": {
         const nextProvider = String(value);
-        await this.plugin.updateSettings({
-          ...settings,
-          provider: nextProvider,
-          // 切换供应商时，用新 preset 的默认模型补齐空模型；已填模型保留。
-          model: normalizeConfiguredModel(nextProvider, settings.model)
-        });
+        const current = settingsProfile(settings);
+        const state = profileState(settings);
+        const profile = { ...current, provider: nextProvider, model: normalizeConfiguredModel(nextProvider, current.model) };
+        await this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: profile.id, profiles: state.profiles.map((item) => item.id === profile.id ? profile : item) }, provider: profile.provider, model: profile.model });
         this.update();
         break;
       }
-      case "model":
-        await this.plugin.updateSettings({
-          ...settings,
-          model: normalizeConfiguredModel(settings.provider, String(value))
-        });
+      case "model": {
+        const current = settingsProfile(settings);
+        const state = profileState(settings);
+        const model = normalizeConfiguredModel(current.provider, String(value));
+        await this.plugin.updateSettings({ ...settings, providerProfiles: { activeProfileId: current.id, profiles: state.profiles.map((item) => item.id === current.id ? { ...item, model } : item) }, model });
         break;
+      }
       case "baseUrl": {
         const nextBaseUrl = String(value);
         const validation = validateBaseUrl(nextBaseUrl);
@@ -331,8 +390,11 @@ export class TreeTalkSettingTab extends PluginSettingTab {
         if (validation.warning !== undefined) {
           new Notice(validation.warning);
         }
+        const current = settingsProfile(settings);
+        const state = profileState(settings);
         await this.plugin.updateSettings({
           ...settings,
+          providerProfiles: { activeProfileId: current.id, profiles: state.profiles.map((item) => item.id === current.id ? { ...item, baseUrl: nextBaseUrl } : item) },
           baseUrl: nextBaseUrl
         });
         break;

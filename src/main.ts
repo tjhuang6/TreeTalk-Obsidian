@@ -71,6 +71,11 @@ import { ActiveResponseRequests } from "./providers/active-response-requests";
 import type { ActiveResponseHandle } from "./providers/active-response-requests";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { resolveProfile } from "./providers/presets";
+import {
+  migrateLegacyProviderProfile,
+  profileSecretId,
+  resolveActiveProfile
+} from "./providers/provider-profiles";
 import { NodeSummaryCoordinator } from "./providers/node-summary-coordinator";
 import { StreamingProviderTransport } from "./providers/streaming-transport";
 import type { ProviderProfile } from "./providers/types";
@@ -152,8 +157,6 @@ export const COMMAND_IDS = {
   depositGraph: "open-deposit-relationship-graph"
 } as const;
 
-const SECRET_ID = "treetalk-api-key";
-
 function sourceSection(
   sources: Array<{ title: string; url: string }>
 ): string {
@@ -226,7 +229,7 @@ export default class TreeTalkPlugin extends Plugin {
     },
     {
       getProfile: () => this.currentProviderProfile(),
-      getModel: () => this.pluginSettings.model,
+      getModel: () => this.activeProfileConfig().model,
       now: () => new Date().toISOString(),
       persistPending: async (tabId) => {
         const tab = this.tabsStore.getTab(tabId);
@@ -366,6 +369,19 @@ export default class TreeTalkPlugin extends Plugin {
     });
     this.pluginData = parsePluginData(await this.loadData());
     this.pluginSettings = this.pluginData.settings;
+    const migratedProfiles = await migrateLegacyProviderProfile(
+      this.pluginSettings,
+      {
+        getSecret: (id) => this.app.secretStorage.getSecret(id),
+        setSecret: (id, value) => this.app.secretStorage.setSecret(id, value),
+        listSecrets: () => this.app.secretStorage.listSecrets()
+      }
+    );
+    if (this.pluginSettings.providerProfiles?.profiles.length !== migratedProfiles.profiles.length) {
+      this.pluginSettings = normalizeTreeTalkSettings({ ...this.pluginSettings, providerProfiles: migratedProfiles });
+      this.pluginData = { ...this.pluginData, settings: this.pluginSettings };
+      await this.persistPluginData();
+    }
     const runtime = createPrivateStorageRuntime(this.app.vault);
     const vaultPort = runtime.port;
     this.roots = runtime.roots;
@@ -1000,12 +1016,12 @@ export default class TreeTalkPlugin extends Plugin {
   }
 
   getApiKey(): string {
-    return this.app.secretStorage.getSecret(SECRET_ID) ?? "";
+    return this.app.secretStorage.getSecret(profileSecretId(this.activeProfileConfig().id)) ?? "";
   }
 
   setApiKey(value: string): void {
     const apiKey = value.trim();
-    this.app.secretStorage.setSecret(SECRET_ID, apiKey);
+    this.app.secretStorage.setSecret(profileSecretId(this.activeProfileConfig().id), apiKey);
     if (apiKey.length > 0) void this.nodeSummaries.repairOpenTabs();
   }
 
@@ -1261,11 +1277,23 @@ export default class TreeTalkPlugin extends Plugin {
     }
   }
 
-  private currentProviderProfile(): ProviderProfile {
-    return resolveProfile({
+  private activeProfileConfig() {
+    const legacy = {
+      id: "legacy-fallback",
+      label: "默认",
       provider: this.pluginSettings.provider,
       model: this.pluginSettings.model,
-      baseUrl: this.pluginSettings.baseUrl,
+      baseUrl: this.pluginSettings.baseUrl
+    };
+    return resolveActiveProfile(this.pluginSettings.providerProfiles, legacy);
+  }
+
+  private currentProviderProfile(): ProviderProfile {
+    const profile = this.activeProfileConfig();
+    return resolveProfile({
+      provider: profile.provider,
+      model: profile.model,
+      baseUrl: profile.baseUrl,
       apiKey: this.getApiKey()
     });
   }
@@ -1508,8 +1536,9 @@ export default class TreeTalkPlugin extends Plugin {
       contextPlan
     );
     const messageId = crypto.randomUUID();
+    const activeProfile = this.activeProfileConfig();
     const webSearchEnabled =
-      this.pluginSettings.provider === "deepseek" &&
+      activeProfile.provider === "deepseek" &&
       this.pluginSettings.webSearchEnabled;
     const request: ExecutionRequest = {
       conversationId: ticket.conversationId,
@@ -1543,7 +1572,7 @@ export default class TreeTalkPlugin extends Plugin {
       route: {
         routeId: "default",
         providerProfile: profile,
-        modelId: this.pluginSettings.model
+        modelId: activeProfile.model
       },
       webSearchEnabled,
       streamingOutputEnabled: this.pluginSettings.streamingOutputEnabled,
